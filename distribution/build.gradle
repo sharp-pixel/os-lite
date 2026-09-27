@@ -317,7 +317,7 @@ configure(subprojects.findAll { ['archives', 'packages'].contains(it.name) }) {
 //    libsKeystoreCli project(path: ':distribution:tools:keystore-cli')
 //    libsFipsInstallerCli project(path: ':distribution:tools:fips-demo-installer-cli')
 
-    bcFips libs.bundles.bouncycastle
+    bcFips rootProject.libs.bundles.bouncycastle
   }
 
   project.ext {

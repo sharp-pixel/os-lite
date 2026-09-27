@@ -169,7 +169,14 @@ public class Version implements Comparable<Version>, ToXContentFragment {
     public static final Version V_3_5_0 = new Version(3050099);
     public static final Version V_3_5_1 = new Version(3050199);
     public static final Version V_3_6_0 = new Version(3060099);
-    public static final Version CURRENT = V_3_6_0;
+    public static final Version V_3_6_1 = new Version(3060199);
+    public static final Version V_3_7_0 = new Version(3070099);
+    public static final Version V_3_7_1 = new Version(3070199);
+    public static final Version V_3_8_0 = new Version(3080099);
+    public static final Version V_3_8_1 = new Version(3080199);
+    public static final Version V_3_9_0 = new Version(3090099);
+    public static final Version V_3_10_0 = new Version(3100099);
+    public static final Version CURRENT = V_3_10_0;
 
     protected static final Map<Integer, Version> idToVersion;
     protected static final Map<String, Version> stringToVersion;

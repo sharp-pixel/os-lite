@@ -11,6 +11,11 @@
 
 apply plugin: 'java'
 
+// buildSrc and :build-tools compile this helper in separate builds.
+if (rootProject.name == 'buildSrc') {
+  layout.buildDirectory = layout.projectDirectory.dir('build-bootstrap')
+}
+
 java {
   targetCompatibility = JavaVersion.VERSION_21
   sourceCompatibility = JavaVersion.VERSION_21

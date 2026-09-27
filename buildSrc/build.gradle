@@ -178,10 +178,12 @@ if (project != rootProject) {
   apply plugin: 'opensearch.build'
   apply plugin: 'opensearch.publish'
 
-  allprojects {
-    java {
-        targetCompatibility = JavaVersion.VERSION_21
-        sourceCompatibility = JavaVersion.VERSION_21
+  allprojects { toolsProject ->
+    toolsProject.pluginManager.withPlugin('java') {
+      toolsProject.extensions.configure(JavaPluginExtension) { javaExtension ->
+        javaExtension.targetCompatibility = JavaVersion.VERSION_21
+        javaExtension.sourceCompatibility = JavaVersion.VERSION_21
+      }
     }
   }
 

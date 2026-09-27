@@ -67,9 +67,7 @@ public class RepositoriesSetupPlugin implements Plugin<Project> {
             if (repository instanceof MavenArtifactRepository) {
                 final MavenArtifactRepository maven = (MavenArtifactRepository) repository;
                 assertRepositoryURIIsSecure(maven.getName(), project.getPath(), maven.getUrl());
-                for (URI uri : maven.getArtifactUrls()) {
-                    assertRepositoryURIIsSecure(maven.getName(), project.getPath(), uri);
-                }
+                // No repository here uses separate artifact URLs; reading that deprecated property warns on Gradle 9.6+.
             } else if (repository instanceof IvyArtifactRepository) {
                 final IvyArtifactRepository ivy = (IvyArtifactRepository) repository;
                 assertRepositoryURIIsSecure(ivy.getName(), project.getPath(), ivy.getUrl());

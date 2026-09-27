@@ -61,9 +61,8 @@ allprojects {
 
       spotless {
         java {
-          // Normally this isn't necessary, but we have Java sources in
-          // non-standard places
-          target '**/*.java'
+          // Include non-standard source sets without reading generated build outputs.
+          target 'src/**/*.java'
 
           removeUnusedImports()
           forbidWildcardImports()
@@ -82,7 +81,7 @@ allprojects {
               '',
               '\\#java|\\#org.opensearch|\\#org.hamcrest|\\#'
           )
-          eclipse().configFile rootProject.file('buildSrc/formatterConfig.xml')
+          eclipse(rootProject.libs.versions.eclipse.formatter.get()).configFile rootProject.file('buildSrc/formatterConfig.xml')
           trimTrailingWhitespace()
           endWithNewline()
 

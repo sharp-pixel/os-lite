@@ -8,7 +8,7 @@ repositories {
 }
 dependencies {
     api "org.opensearch:opensearch-common:${project.version}"
-    api libs.jackson.core
+    api libs.jackson3.core
     api libs.log4japi
     testImplementation libs.junit
     testImplementation libs.hamcrest

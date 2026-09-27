@@ -2,20 +2,22 @@
 
 ## Project Overview
 
-`os-lite` is a lightweight, modular reimplementation of [OpenSearch](https://opensearch.org/) (version 3.4.0-SNAPSHOT). The goal is a clean, extensible search/analytics server where features are delivered as pluggable modules rather than baked into the core. It is licensed under Apache 2.0.
+`os-lite` is a lightweight, modular reimplementation of [OpenSearch](https://opensearch.org/) (upstream compatibility target 3.10.0-SNAPSHOT; see `UPSTREAM.md`). The goal is a clean, extensible search/analytics server where features are delivered as pluggable modules rather than baked into the core. It is licensed under Apache 2.0.
 
 ## Repository Layout
 
 ```
 os-lite/
-├── server/                  # Core server: bootstrap, cluster, HTTP, REST, node, plugins, transport
+├── server/                  # Core server: bootstrap, cluster, HTTP, node, plugins, transport
 ├── modules/
 │   ├── hello-world/         # Demo plugin: shows how to add an action + REST handler
 │   ├── transport-netty4/    # Netty 4 HTTP/transport implementation
-│   ├── rest/                # REST infrastructure (being migrated to a module)
+│   ├── rest/                # REST infrastructure and SPI
 │   └── http-api/            # HTTP API definitions (placeholder)
 ├── libs/
-│   └── generic-engine/      # Shared library code
+│   ├── core/                # Engine-neutral core and wire contracts
+│   ├── engine-api/          # Pluggable engine contracts
+│   └── index-api/           # Engine-neutral index contracts
 ├── distribution/            # Packaging (Linux x64 tar, macOS arm64 tar)
 │   └── tools/               # java-version-checker, launchers
 ├── buildSrc/                # Custom Gradle plugins and build tasks
@@ -28,15 +30,15 @@ os-lite/
 
 | Layer | Technology |
 |---|---|
-| Language | Java 21+ |
-| Build | Gradle 8.5 (wrapper: `./gradlew`) |
+| Language | Java 25 runtime; Java 21 build-tool target |
+| Build | Gradle 9.8.0 (wrapper: `./gradlew`) |
 | Dependency versions | `gradle/libs.versions.toml` (version catalog) |
-| Search engine | Lucene 10.3.2 |
-| Networking | Netty 4.2.7, Reactor Netty 1.3.0 |
-| Serialization | Jackson 2.18.2, Protocol Buffers 3.25.8 |
-| Logging | Log4j 2.21.0, SLF4j 2.0.17 |
+| Search engine | Lucene 10.5.1 (lucene-engine module only) |
+| Networking | Netty 4.2.18, Reactor Netty 1.3.7 |
+| Serialization | Jackson 3.2.2 (runtime), 2.22.2 (build tooling), Protocol Buffers 3.25.8 |
+| Logging | Log4j 2.25.5, SLF4j 2.0.17 |
 | Testing | JUnit 4/5, Hamcrest, Mockito 5, RandomizedRunner |
-| Bundled JDK | Adoptium JDK 25.0.1+8 |
+| Bundled JDK | Adoptium JDK 25.0.4.1+1 |
 
 ## Build, Run, and Test Commands
 
@@ -92,17 +94,11 @@ Note that plugins/modules depend on `server/`, not the other way around. We do n
 the dependency is implicitly injected by the `opensearchplugin` Gradle plugin, which is implemented in `buildSrc/src/main/groovy/org/opensearch/gradle/plugin/PluginBuildPlugin.groovy`.
 Specifically, its `configureDependencies` method adds `compileOnly project.project(':server')` the plugin's dependencies.
 
-## Active Work (branch: `move_rest_to_a_module`)
+## Architecture constraints
 
-The current branch is extracting REST API infrastructure out of `server/` and into `modules/rest/`, continuing the trend of keeping `server/` minimal and delegating to modules.
+REST extraction is complete: `modules/rest` owns `RestController` and HTTP-to-REST adaptation. The server dispatcher accepts `HttpRequest` and `HttpChannel`. `NetworkModule` selects the dispatcher contributed by a `NetworkPlugin`, rejects multiple providers, and uses `NO_OP_DISPATCHER` when none is installed.
 
-Any class in `/server` with "Rest" somewhere in its name will need to move into `modules/rest`.
-
-This will require a number of changes. For example:
-1. We will need to remove the creation of `RestController` from `ActionModule.java`. Instead, we will need to create `RestController` in the `modules/rest/` plugin, probably in the plugin's `createComponents` method.
-2. We need to replace the `RestRequest`/`RestChannel` parameters in `HttpServerTransport.Dispatcher`'s method with `HttpRequest` and `HttpChannel`. Right now, we have some HTTP/REST bridge logic in `DefaultRestChannel` and in `AbstractHttpServerTransport`. Currently, the boundary says that `AbstractHttpServerTransport` is responsible for converting an `HttpRequest` into a `RestRequest` (and the `HttpChannel` is adapted to a `RestChannel`). The `RestRequest` and `RestChannel` are passed to `RestController` via the `HttpServerTransport.Dispatcher` interface. With this refactoring, we only want `server/` to know about HTTP. So, the responsibility of converting from HTTP to REST must move out of `AbstractHttpServerTransport` and into `RestController`. That is, the `modules/rest/` plugin will understand HTTP and REST, but `server/` will only understand HTTP.
-3. We should add a method to `NetworkPlugin` called `HttpServerTransport.Dispatcher getHttpServerTransportDispatcher()`. If more than one loaded `NetworkPlugin` implements this method, we can throw an `IllegalStateException`. Then, in the `Node` constructor, we can pass the supplied `HttpServerTransport.Dispatcher` to the `NetworkModule` constructor. If no `NetworkPlugin` supplies an `HttpServerTransport.Dispatcher`, we should pass `HttpServerTransport.NO_OP_DISPATCHER` to the `NetworkModule` constructor.
-4. We will need to remove `RestHelloWorldAction` from the `modules/hello-world/` plugin, at least until we're ready to make it an extension of the REST module, since `BaseRestHandler` will move out of `server/`.
+The host and local `libs/core` must remain free of Lucene dependencies. Lucene belongs to the isolated `modules/lucene-engine` provider. Preserve the local core dependency substitution, engine/index APIs, REST category modules, and lifecycle/security fixes when porting upstream changes. Upstream plugin binary compatibility is not promised.
 
 ## Code Quality
 

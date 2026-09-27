@@ -136,9 +136,29 @@ public class CoreWireCompatibilityTests {
     }
 
     @Test
+    public void testGenericValuesRejectExcessiveNesting() throws IOException {
+        // Build the wire payload iteratively, so the test encoder cannot overflow first.
+        for (int tag : new int[] { 7, 8, 9, 10, 24, 25 }) {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            try (StreamOutput output = new OutputStreamStreamOutput(bytes)) {
+                for (int depth = 0; depth < 1002; depth++) {
+                    output.writeByte((byte) tag);
+                    output.writeVInt(1);
+                    if (tag == 9 || tag == 10) output.writeString("key");
+                }
+                output.writeByte((byte) -1); // null leaf
+            }
+            try (StreamInput input = StreamInput.wrap(bytes.toByteArray())) {
+                IOException error = assertThrows(IOException.class, input::readGenericValue);
+                assertTrue(error.getMessage().contains("Maximum nesting depth"));
+            }
+        }
+    }
+
+    @Test
     public void testCoreHasNoLuceneAtRuntime() {
         assertThrows(ClassNotFoundException.class, () -> Class.forName("org.apache.lucene.util.BytesRef"));
         assertTrue(Version.CURRENT.after(Version.V_3_5_0));
-        assertEquals(Version.MASK ^ 3060099, Version.CURRENT.id);
+        assertEquals(Version.MASK ^ 3100099, Version.CURRENT.id);
     }
 }
