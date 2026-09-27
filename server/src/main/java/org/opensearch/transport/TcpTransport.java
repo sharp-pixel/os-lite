@@ -123,7 +123,10 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     // This is the number of bytes necessary to read the message size
     private static final int BYTES_NEEDED_FOR_MESSAGE_SIZE = TcpHeader.MARKER_BYTES_SIZE + TcpHeader.MESSAGE_LENGTH_SIZE;
-    private static final long THIRTY_PER_HEAP_SIZE = (long) (JvmInfo.jvmInfo().getMem().getHeapMax().getBytes() * 0.3);
+    static final long MAX_MESSAGE_SIZE = Math.min(
+        Integer.MAX_VALUE - TcpHeader.BYTES_REQUIRED_FOR_MESSAGE_SIZE,
+        (long) (JvmInfo.jvmInfo().getMem().getHeapMax().getBytes() * 0.3)
+    );
 
     final StatsTracker statsTracker = new StatsTracker();
 
@@ -866,12 +869,12 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
             throw new StreamCorruptedException("invalid data length: " + messageLength);
         }
 
-        if (messageLength > THIRTY_PER_HEAP_SIZE) {
+        if (messageLength > MAX_MESSAGE_SIZE) {
             throw new IllegalArgumentException(
                 "transport content length received ["
                     + new ByteSizeValue(messageLength)
                     + "] exceeded ["
-                    + new ByteSizeValue(THIRTY_PER_HEAP_SIZE)
+                    + new ByteSizeValue(MAX_MESSAGE_SIZE)
                     + "]"
             );
         }

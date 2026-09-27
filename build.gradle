@@ -170,6 +170,8 @@ allprojects {
 // Core serialization and byte contracts are owned locally; never mix in the upstream core JAR.
 subprojects {
     configurations.configureEach {
+        // Build-tool integration fixtures need the upstream Java 21 JAR, not the Java 25 product runtime.
+        if (project.path == ':build-tools' && name == 'integTestRuntimeClasspath') return
         resolutionStrategy.dependencySubstitution {
             substitute module('org.opensearch:opensearch-core') using project(':libs:core')
         }

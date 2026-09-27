@@ -17,3 +17,5 @@ testingConventions.enabled = false
 tasks.named('dependencyLicenses').configure { enabled = false }
 tasks.named('forbiddenApisMain').configure { replaceSignatureFiles 'jdk-signatures' }
 tasks.named('forbiddenApisTest').configure { replaceSignatureFiles 'jdk-signatures' }
+// Independent upstream wire fixtures are binary, not UTF-8 source files.
+tasks.named('forbiddenPatterns').configure { exclude '**/wire/*.bin' }

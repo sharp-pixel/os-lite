@@ -41,6 +41,7 @@ import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.core.common.io.stream.StreamInput;
 
 import java.io.IOException;
+import java.io.StreamCorruptedException;
 import java.util.function.Consumer;
 
 import static org.opensearch.Version.MASK;
@@ -86,7 +87,7 @@ public class InboundDecoder implements Releasable {
                 fragmentConsumer.accept(PING);
                 return 6;
             } else {
-                int headerBytesToRead = headerBytesToRead(reference);
+                int headerBytesToRead = headerBytesToRead(reference, messageLength);
                 if (headerBytesToRead == 0) {
                     return 0;
                 } else {
@@ -95,6 +96,7 @@ public class InboundDecoder implements Releasable {
                     Header header = readHeader(version, messageLength, reference);
                     bytesConsumed += headerBytesToRead;
                     if (header.isCompressed()) {
+                        if (isDone()) throw new StreamCorruptedException("missing compressed transport body");
                         decompressor = new TransportDecompressor(recycler);
                     }
                     fragmentConsumer.accept(header);
@@ -106,20 +108,21 @@ public class InboundDecoder implements Releasable {
                 }
             }
         } else {
-            // There are a minimum number of bytes required to start decompression
-            if (decompressor != null && decompressor.canDecompress(reference.length()) == false) {
+            int bytesToConsume = Math.min(reference.length(), totalNetworkSize - bytesConsumed);
+            // Bound temporary inflation per decode, and let aggregation account for each chunk before continuing.
+            if (decompressor != null) bytesToConsume = Math.min(bytesToConsume, PageCacheRecycler.BYTE_PAGE_SIZE);
+            if (decompressor != null && decompressor.canDecompress(bytesToConsume) == false) {
+                if (bytesToConsume == totalNetworkSize - bytesConsumed) throw new StreamCorruptedException("truncated compression header");
                 return 0;
             }
-            int bytesToConsume = Math.min(reference.length(), totalNetworkSize - bytesConsumed);
             bytesConsumed += bytesToConsume;
-            ReleasableBytesReference retainedContent;
-            if (isDone()) {
-                retainedContent = reference.retainedSlice(0, bytesToConsume);
-            } else {
-                retainedContent = reference.retain();
-            }
+            ReleasableBytesReference retainedContent = reference.retainedSlice(0, bytesToConsume);
             if (decompressor != null) {
                 decompress(retainedContent);
+                if (isDone() != decompressor.isEOS()) {
+                    if (isDone()) throw new StreamCorruptedException("truncated compressed transport body");
+                    throw new StreamCorruptedException("compressed transport body ended before its frame boundary");
+                }
                 ReleasableBytesReference decompressed;
                 while ((decompressed = decompressor.pollDecompressedPage()) != null) {
                     fragmentConsumer.accept(decompressed);
@@ -156,7 +159,7 @@ public class InboundDecoder implements Releasable {
     private void decompress(ReleasableBytesReference content) throws IOException {
         try (ReleasableBytesReference toRelease = content) {
             int consumed = decompressor.decompress(content);
-            assert consumed == content.length();
+            if (consumed != content.length()) throw new StreamCorruptedException("trailing bytes after compressed transport body");
         }
     }
 
@@ -164,7 +167,10 @@ public class InboundDecoder implements Releasable {
         return bytesConsumed == totalNetworkSize;
     }
 
-    private int headerBytesToRead(BytesReference reference) {
+    private static int headerBytesToRead(BytesReference reference, int messageLength) throws IOException {
+        if (messageLength < TcpHeader.headerSize(Version.CURRENT) - TcpHeader.BYTES_REQUIRED_FOR_MESSAGE_SIZE) {
+            throw new StreamCorruptedException("transport frame is shorter than its fixed header");
+        }
         if (reference.length() < TcpHeader.BYTES_REQUIRED_FOR_VERSION) {
             return 0;
         }
@@ -181,6 +187,10 @@ public class InboundDecoder implements Releasable {
             return 0;
         } else {
             int variableHeaderSize = reference.getInt(TcpHeader.VARIABLE_HEADER_SIZE_POSITION);
+            if (variableHeaderSize < 0
+                || variableHeaderSize > messageLength - (fixedHeaderSize - TcpHeader.BYTES_REQUIRED_FOR_MESSAGE_SIZE)) {
+                throw new StreamCorruptedException("variable header size is outside the transport frame");
+            }
             int totalHeaderSize = fixedHeaderSize + variableHeaderSize;
             if (totalHeaderSize > reference.length()) {
                 return 0;
@@ -192,7 +202,9 @@ public class InboundDecoder implements Releasable {
 
     // exposed for use in tests
     public static Header readHeader(Version version, int networkMessageSize, BytesReference bytesReference) throws IOException {
-        try (StreamInput streamInput = bytesReference.streamInput()) {
+        int headerSize = headerBytesToRead(bytesReference, networkMessageSize);
+        if (headerSize == 0) throw new StreamCorruptedException("incomplete transport header");
+        try (StreamInput streamInput = bytesReference.slice(0, headerSize).streamInput()) {
             TransportProtocol protocol = TransportProtocol.fromBytes(streamInput.readByte(), streamInput.readByte());
             streamInput.skip(TcpHeader.MESSAGE_LENGTH_SIZE);
             long requestId = streamInput.readLong();
@@ -212,6 +224,7 @@ public class InboundDecoder implements Releasable {
                 // Skip since we already have ensured enough data available
                 streamInput.readInt();
                 header.finishParsingHeader(streamInput);
+                if (streamInput.read() != -1) throw new StreamCorruptedException("trailing bytes in transport header");
             }
             return header;
         }

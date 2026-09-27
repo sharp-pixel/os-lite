@@ -43,7 +43,7 @@ import org.opensearch.core.common.bytes.CompositeBytesReference;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -62,6 +62,7 @@ public class InboundAggregator implements Releasable {
     private ArrayList<ReleasableBytesReference> contentAggregation;
     private Header currentHeader;
     private Exception aggregationException;
+    private BreakerControl breakerControl;
     private boolean canTripBreaker = true;
     private boolean isClosed = false;
 
@@ -90,6 +91,7 @@ public class InboundAggregator implements Releasable {
         assert isAggregating() == false;
         assert firstContent == null && contentAggregation == null;
         currentHeader = header;
+        breakerControl = new BreakerControl(circuitBreaker);
         if (currentHeader.isRequest() && currentHeader.needsToReadVariableHeader() == false) {
             initializeRequestState();
         }
@@ -98,6 +100,16 @@ public class InboundAggregator implements Releasable {
     public void aggregate(ReleasableBytesReference content) {
         ensureOpen();
         assert isAggregating();
+        if (isShortCircuited() == false && currentHeader.needsToReadVariableHeader() == false) {
+            checkBreaker(currentHeader, content.length(), breakerControl);
+            if (isShortCircuited()) {
+                releaseContent();
+                firstContent = null;
+                contentAggregation = null;
+                breakerControl.close();
+                breakerControl = new BreakerControl(circuitBreaker);
+            }
+        }
         if (isShortCircuited() == false) {
             if (isFirstContent()) {
                 firstContent = content.retain();
@@ -126,17 +138,17 @@ public class InboundAggregator implements Releasable {
             releasableContent = new ReleasableBytesReference(content, () -> Releasables.close(references));
         }
 
-        final BreakerControl breakerControl = new BreakerControl(circuitBreaker);
         final InboundMessage aggregated = new InboundMessage(currentHeader, releasableContent, breakerControl);
         boolean success = false;
         try {
-            if (aggregated.getHeader().needsToReadVariableHeader()) {
+            boolean deferredHeader = aggregated.getHeader().needsToReadVariableHeader();
+            if (deferredHeader) {
                 aggregated.getHeader().finishParsingHeader(aggregated.openOrGetStreamInput());
                 if (aggregated.getHeader().isRequest()) {
                     initializeRequestState();
                 }
             }
-            if (isShortCircuited() == false) {
+            if (deferredHeader && isShortCircuited() == false) {
                 checkBreaker(aggregated.getHeader(), aggregated.getContentLength(), breakerControl);
             }
             if (isShortCircuited()) {
@@ -178,8 +190,15 @@ public class InboundAggregator implements Releasable {
     }
 
     private void closeCurrentAggregation() {
-        releaseContent();
-        resetCurrentAggregation();
+        try {
+            releaseContent();
+        } finally {
+            try {
+                Releasables.close(breakerControl);
+            } finally {
+                resetCurrentAggregation();
+            }
+        }
     }
 
     private void releaseContent() {
@@ -195,6 +214,7 @@ public class InboundAggregator implements Releasable {
         contentAggregation = null;
         currentHeader = null;
         aggregationException = null;
+        breakerControl = null;
         canTripBreaker = true;
     }
 
@@ -229,13 +249,13 @@ public class InboundAggregator implements Releasable {
         if (canTripBreaker) {
             try {
                 circuitBreaker.get().addEstimateBytesAndMaybeBreak(contentLength, header.getActionName());
-                breakerControl.setReservedBytes(contentLength);
+                breakerControl.addReservedBytes(contentLength);
             } catch (CircuitBreakingException e) {
                 shortCircuit(e);
             }
         } else {
             circuitBreaker.get().addWithoutBreaking(contentLength);
-            breakerControl.setReservedBytes(contentLength);
+            breakerControl.addReservedBytes(contentLength);
         }
     }
 
@@ -249,20 +269,20 @@ public class InboundAggregator implements Releasable {
         private static final int CLOSED = -1;
 
         private final Supplier<CircuitBreaker> circuitBreaker;
-        private final AtomicInteger bytesToRelease = new AtomicInteger(0);
+        private final AtomicLong bytesToRelease = new AtomicLong(0);
 
         private BreakerControl(Supplier<CircuitBreaker> circuitBreaker) {
             this.circuitBreaker = circuitBreaker;
         }
 
-        private void setReservedBytes(int reservedBytes) {
-            final boolean set = bytesToRelease.compareAndSet(0, reservedBytes);
-            assert set : "Expected bytesToRelease to be 0, found " + bytesToRelease.get();
+        private void addReservedBytes(int reservedBytes) {
+            long previous = bytesToRelease.getAndAdd(reservedBytes);
+            assert previous != CLOSED;
         }
 
         @Override
         public void close() {
-            final int toRelease = bytesToRelease.getAndSet(CLOSED);
+            final long toRelease = bytesToRelease.getAndSet(CLOSED);
             assert toRelease != CLOSED;
             if (toRelease > 0) {
                 circuitBreaker.get().addWithoutBreaking(-toRelease);

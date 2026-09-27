@@ -19,6 +19,7 @@ import org.opensearch.common.util.concurrent.ThreadContext;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.bytes.BytesArray;
 import org.opensearch.core.indices.breaker.NoneCircuitBreakerService;
+import org.opensearch.core.rest.RestStatus;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.http.HttpChannel;
 import org.opensearch.http.HttpRequest;
@@ -42,10 +43,62 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @TestMethodProviders({ JUnit3MethodProvider.class })
 public class RestPluginTests extends RandomizedTest {
+    public void testMalformedParametersAndContentTypeReturnBadRequest() throws Exception {
+        assertMalformedRequest("/test?value=%", "invalid");
+    }
+
+    public void testMalformedChannelParametersAndContentTypeReturnBadRequest() throws Exception {
+        assertMalformedRequest("/test?pretty=invalid", "invalid");
+    }
+
+    public void testMalformedParametersAloneReturnBadRequest() throws Exception {
+        assertMalformedRequest("/test?value=%", "application/json");
+    }
+
+    private void assertMalformedRequest(String uri, String contentType) throws Exception {
+        ThreadContext context = new ThreadContext(Settings.EMPTY);
+        try (ThreadContext.StoredContext ignored = context.stashContext()) {
+            RestPlugin plugin = new RestPlugin();
+            plugin.createComponents(new PluginResources(NamedXContentRegistry.EMPTY, null, null, null, null));
+            HttpServerTransport.Dispatcher dispatcher = plugin.getHttpServerTransportDispatcher(
+                BigArrays.NON_RECYCLING_INSTANCE,
+                Settings.EMPTY,
+                new NoneCircuitBreakerService(),
+                new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS),
+                NoopTracer.INSTANCE
+            ).orElseThrow();
+            HttpRequest request = malformedRequest(uri, Map.of("Content-Type", List.of(contentType)));
+            HttpRequest withoutContentType = malformedRequest(uri, Map.of());
+            when(request.removeHeader("Content-Type")).thenReturn(withoutContentType);
+            when(request.createResponse(any(), any())).thenReturn(mock(HttpResponse.class));
+            HttpChannel channel = mock(HttpChannel.class);
+            doAnswer(invocation -> {
+                ActionListener<Void> listener = invocation.getArgument(1);
+                listener.onResponse(null);
+                return null;
+            }).when(channel).sendResponse(any(), any());
+            dispatcher.dispatchRequest(request, channel, context);
+            verify(request).createResponse(eq(RestStatus.BAD_REQUEST), any());
+            verify(request).release();
+            verify(channel).sendResponse(any(), any());
+        }
+    }
+
+    private static HttpRequest malformedRequest(String uri, Map<String, List<String>> headers) {
+        HttpRequest request = mock(HttpRequest.class);
+        when(request.method()).thenReturn(HttpRequest.Method.GET);
+        when(request.uri()).thenReturn(uri);
+        when(request.content()).thenReturn(BytesArray.EMPTY);
+        when(request.protocolVersion()).thenReturn(HttpRequest.HttpVersion.HTTP_1_1);
+        when(request.getHeaders()).thenReturn(headers);
+        return request;
+    }
+
     public void testCopiesOpaqueIdToHandlerContext() throws Exception {
         assertHeaderDispatch(List.of("request-42"), "request-42", 1);
     }

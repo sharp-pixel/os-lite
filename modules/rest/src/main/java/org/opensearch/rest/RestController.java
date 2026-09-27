@@ -364,7 +364,7 @@ public class RestController implements HttpServerTransport.Dispatcher {
                 innerRestRequest = requestWithoutContentTypeHeader(httpRequest, httpChannel, badRequestCause);
             } catch (final RestRequest.BadParameterException e) {
                 badRequestCause = ExceptionsHelper.useOrSuppress(badRequestCause, e);
-                innerRestRequest = RestRequest.requestWithoutParameters(xContentRegistry, httpRequest, httpChannel);
+                innerRestRequest = requestWithoutParameters(httpRequest, httpChannel, badRequestCause);
             }
             restRequest = innerRestRequest;
         }
@@ -406,7 +406,7 @@ public class RestController implements HttpServerTransport.Dispatcher {
                 }
             } catch (final IllegalArgumentException e) {
                 badRequestCause = ExceptionsHelper.useOrSuppress(badRequestCause, e);
-                final RestRequest innerRequest = RestRequest.requestWithoutParameters(xContentRegistry, httpRequest, httpChannel);
+                final RestRequest innerRequest = requestWithoutParameters(httpRequest, httpChannel, badRequestCause);
 
                 if (httpChannel instanceof StreamingHttpChannel) {
                     innerChannel = new DefaultStreamingRestChannel(
@@ -465,6 +465,15 @@ public class RestController implements HttpServerTransport.Dispatcher {
         } catch (final RestRequest.BadParameterException e) {
             badRequestCause.addSuppressed(e);
             return RestRequest.requestWithoutParameters(xContentRegistry, httpRequestWithoutContentType, httpChannel);
+        }
+    }
+
+    private RestRequest requestWithoutParameters(HttpRequest httpRequest, HttpChannel httpChannel, Exception badRequestCause) {
+        try {
+            return RestRequest.requestWithoutParameters(xContentRegistry, httpRequest, httpChannel);
+        } catch (final RestRequest.ContentTypeHeaderException e) {
+            badRequestCause.addSuppressed(e);
+            return RestRequest.requestWithoutParameters(xContentRegistry, httpRequest.removeHeader("Content-Type"), httpChannel);
         }
     }
 

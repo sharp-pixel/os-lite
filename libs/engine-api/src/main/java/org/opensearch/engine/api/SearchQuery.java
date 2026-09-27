@@ -37,6 +37,8 @@ public sealed interface SearchQuery permits SearchQuery.All, SearchQuery.Term, S
     private static void checkText(String field, String text) {
         if (Objects.requireNonNull(field).length() > 128 || Objects.requireNonNull(text).length() > 16384)
             throw new IllegalArgumentException("query text exceeds limits");
+        EngineDocument.validateUnicode(field, "query field");
+        EngineDocument.validateUnicode(text, "query text");
     }
 
     record All() implements SearchQuery {

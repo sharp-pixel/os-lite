@@ -40,7 +40,7 @@ def generateLuceneVersion = tasks.register('generateLuceneVersion') {
         target.text = "version=${libs.versions.lucene.get()}\n"
     }
 }
-sourceSets.main.resources.srcDir(luceneResources)
+sourceSets.main.resources.srcDir(generateLuceneVersion)
 tasks.named('processResources').configure { dependsOn generateLuceneVersion }
 
 // Lucene-specific forbidden API signatures can only be resolved in the provider.

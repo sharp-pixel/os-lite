@@ -58,11 +58,19 @@ public class TransportDecompressor implements Closeable {
     private final Inflater inflater;
     private final PageCacheRecycler recycler;
     private final ArrayDeque<Recycler.V<byte[]>> pages;
+    private final long maximumBytes;
+    private long decompressedBytes;
     private int pageOffset = PageCacheRecycler.BYTE_PAGE_SIZE;
     private boolean hasReadHeader = false;
 
     public TransportDecompressor(PageCacheRecycler recycler) {
+        this(recycler, TcpTransport.MAX_MESSAGE_SIZE);
+    }
+
+    TransportDecompressor(PageCacheRecycler recycler, long maximumBytes) {
+        if (maximumBytes < 0) throw new IllegalArgumentException("negative decompression limit");
         this.recycler = recycler;
+        this.maximumBytes = maximumBytes;
         inflater = new Inflater(true);
         pages = new ArrayDeque<>(4);
     }
@@ -108,28 +116,34 @@ public class TransportDecompressor implements Closeable {
                     page = pages.getLast();
                 }
                 byte[] output = page.v();
+                boolean retained = isNewPage == false;
                 try {
                     int bytesInflated = inflater.inflate(output, pageOffset, PageCacheRecycler.BYTE_PAGE_SIZE - pageOffset);
                     pageOffset += bytesInflated;
+                    decompressedBytes += bytesInflated;
+                    if (decompressedBytes > maximumBytes) throw new IOException("decompressed transport body exceeds size limit");
                     if (isNewPage) {
                         if (bytesInflated == 0) {
-                            page.close();
                             pageOffset = PageCacheRecycler.BYTE_PAGE_SIZE;
                         } else {
                             pages.add(page);
+                            retained = true;
                         }
+                    }
+                    if (bytesInflated == 0 && inflater.needsInput() == false && inflater.finished() == false) {
+                        throw new IOException("compressed transport body requires a dictionary or made no progress");
                     }
                 } catch (DataFormatException e) {
                     throw new IOException("Exception while inflating bytes", e);
+                } finally {
+                    if (retained == false) page.close();
                 }
                 if (inflater.needsInput()) {
                     continueInflating = false;
                 }
                 if (inflater.finished()) {
-                    bytesConsumed -= inflater.getRemaining();
-                    continueInflating = false;
+                    return bytesConsumed - inflater.getRemaining();
                 }
-                assert inflater.needsDictionary() == false;
             }
         }
 

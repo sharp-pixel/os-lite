@@ -37,6 +37,28 @@ import static org.junit.Assert.assertTrue;
 
 @TestMethodProviders({ JUnit3MethodProvider.class })
 public class IndexWireTests extends RandomizedTest {
+    public void testRejectsUnpairedSurrogatesBeforeBackendOrWireReplacement() {
+        for (String malformed : List.of(String.valueOf((char) 0xd800), String.valueOf((char) 0xdc00), "a" + (char) 0xd800 + "b")) {
+            assertThrows(IllegalArgumentException.class, () -> new EngineDocument("1", Map.of("title", malformed), new byte[0]));
+            assertThrows(IllegalArgumentException.class, () -> new SearchQuery.Term("title", malformed));
+            assertThrows(IllegalArgumentException.class, () -> new SearchQuery.Match("title", malformed));
+        }
+    }
+
+    public void testValidUnicodeSurvivesDocumentAndQueryWire() throws Exception {
+        String text = "replacement \ufffd and supplementary " + new String(Character.toChars(0x1f642));
+        EngineDocument document = new EngineDocument("1", Map.of("title", text), new byte[0]);
+        SearchQuery query = new SearchQuery.Term("title", text);
+        try (BytesStreamOutput output = new BytesStreamOutput()) {
+            IndexWire.document(output, document);
+            IndexWire.query(output, query);
+            try (StreamInput input = output.bytes().streamInput()) {
+                assertEquals(document.fields(), IndexWire.document(input).fields());
+                assertEquals(query, IndexWire.query(input));
+            }
+        }
+    }
+
     public void testIndependentDescribeFixtureIncludesParentTaskAndVersion() throws Exception {
         // Empty parent-task node ID, protocol version 2, UTF-8 length 5, then index name.
         byte[] fixture = { 0, 2, 5, 'b', 'o', 'o', 'k', 's' };

@@ -483,17 +483,24 @@ public class Node implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public synchronized void close() throws IOException {
+        List<Closeable> toClose = new ArrayList<>();
         synchronized (lifecycle) {
             if (lifecycle.started()) {
-                stop();
+                lifecycle.moveToStopped();
+                logger.info("stopping ...");
+                // Stop failures must not prevent the remaining services from stopping and closing.
+                toClose.add(injector.getInstance(HttpServerTransport.class)::stop);
+                toClose.add(injector.getInstance(TransportService.class)::stop);
+                for (LifecycleComponent plugin : pluginLifecycleComponents) {
+                    toClose.add(plugin::stop);
+                }
             }
             if (!lifecycle.moveToClosed()) {
                 return;
             }
         }
         logger.info("closing ...");
-        List<Closeable> toClose = new ArrayList<>();
         StopWatch stopWatch = new StopWatch("node_close");
         toClose.add(() -> stopWatch.start("http"));
         toClose.add(injector.getInstance(HttpServerTransport.class));
@@ -534,41 +541,43 @@ public class Node implements Closeable {
     /**
      * Start the node. If the node is already started, this method is no-op.
      */
-    public void start() throws NodeValidationException {
+    public synchronized void start() throws NodeValidationException {
         if (!lifecycle.moveToStarted()) {
             return;
         }
 
-        logger.info("starting ...");
-        pluginLifecycleComponents.forEach(LifecycleComponent::start);
-        TransportService transportService = injector.getInstance(TransportService.class);
-        transportService.getTaskManager().setTaskCancellationService(new TaskCancellationService(transportService));
+        try {
+            logger.info("starting ...");
+            pluginLifecycleComponents.forEach(LifecycleComponent::start);
+            TransportService transportService = injector.getInstance(TransportService.class);
+            transportService.getTaskManager().setTaskCancellationService(new TaskCancellationService(transportService));
 
-        TaskResourceTrackingService taskResourceTrackingService = injector.getInstance(TaskResourceTrackingService.class);
-        transportService.getTaskManager().setTaskResourceTrackingService(taskResourceTrackingService);
-        runnableTaskListener.set(taskResourceTrackingService);
-        transportService.start();
-        assert localNodeFactory.getNode() != null;
-        assert transportService.getLocalNode().equals(localNodeFactory.getNode())
-            : "transportService has a different local node than the factory provided";
-        validateNodeBeforeAcceptingRequests(
-            new BootstrapContext(environment),
-            transportService.boundAddress(),
-            pluginsService.filterPlugins(Plugin.class).stream().flatMap(p -> p.getBootstrapChecks().stream()).collect(Collectors.toList())
-        );
-        transportService.acceptIncomingRequests();
-        injector.getInstance(HttpServerTransport.class).start();
-        logger.info("started");
-    }
-
-    private void stop() {
-        if (!lifecycle.moveToStopped()) {
-            return;
+            TaskResourceTrackingService taskResourceTrackingService = injector.getInstance(TaskResourceTrackingService.class);
+            transportService.getTaskManager().setTaskResourceTrackingService(taskResourceTrackingService);
+            runnableTaskListener.set(taskResourceTrackingService);
+            transportService.start();
+            assert localNodeFactory.getNode() != null;
+            assert transportService.getLocalNode().equals(localNodeFactory.getNode())
+                : "transportService has a different local node than the factory provided";
+            validateNodeBeforeAcceptingRequests(
+                new BootstrapContext(environment),
+                transportService.boundAddress(),
+                pluginsService.filterPlugins(Plugin.class)
+                    .stream()
+                    .flatMap(p -> p.getBootstrapChecks().stream())
+                    .collect(Collectors.toList())
+            );
+            transportService.acceptIncomingRequests();
+            injector.getInstance(HttpServerTransport.class).start();
+            logger.info("started");
+        } catch (NodeValidationException | RuntimeException | Error failure) {
+            try {
+                close();
+            } catch (IOException | RuntimeException | Error cleanupFailure) {
+                if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
         }
-        logger.info("stopping ...");
-        injector.getInstance(HttpServerTransport.class).stop();
-        injector.getInstance(TransportService.class).stop();
-        pluginLifecycleComponents.forEach(LifecycleComponent::stop);
     }
 
     /**

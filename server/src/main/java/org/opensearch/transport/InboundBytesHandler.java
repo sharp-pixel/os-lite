@@ -25,8 +25,6 @@ import java.util.function.BiConsumer;
  */
 class InboundBytesHandler {
 
-    private static final ThreadLocal<ArrayList<Object>> fragmentList = ThreadLocal.withInitial(ArrayList::new);
-
     private final ArrayDeque<ReleasableBytesReference> pending;
     private final InboundDecoder decoder;
     private final InboundAggregator aggregator;
@@ -51,39 +49,34 @@ class InboundBytesHandler {
 
     public void doHandleBytes(TcpChannel channel, ReleasableBytesReference reference, BiConsumer<TcpChannel, InboundMessage> messageHandler)
         throws IOException {
-        final ArrayList<Object> fragments = fragmentList.get();
-        boolean continueHandling = true;
-
-        while (continueHandling && isClosed == false) {
-            boolean continueDecoding = true;
-            while (continueDecoding && pending.isEmpty() == false) {
+        final ArrayList<Object> fragments = new ArrayList<>();
+        try {
+            while (isClosed == false && pending.isEmpty() == false) {
                 try (ReleasableBytesReference toDecode = getPendingBytes()) {
                     final int bytesDecoded = decoder.decode(toDecode, fragments::add);
-                    if (bytesDecoded != 0) {
-                        releasePendingBytes(bytesDecoded);
-                        if (fragments.isEmpty() == false && endOfMessage(fragments.get(fragments.size() - 1))) {
-                            continueDecoding = false;
-                        }
-                    } else {
-                        continueDecoding = false;
-                    }
+                    if (bytesDecoded == 0) break;
+                    releasePendingBytes(bytesDecoded);
                 }
-            }
-
-            if (fragments.isEmpty()) {
-                continueHandling = false;
-            } else {
+                // Account for each decoded chunk before asking the decoder to allocate more pages.
                 try {
                     forwardFragments(channel, fragments, messageHandler);
                 } finally {
-                    for (Object fragment : fragments) {
-                        if (fragment instanceof ReleasableBytesReference releasableBytesReference) {
-                            releasableBytesReference.close();
-                        }
-                    }
-                    fragments.clear();
+                    releaseFragments(fragments);
                 }
             }
+        } finally {
+            // A decoder may have emitted owned fragments before rejecting the rest of a frame.
+            releaseFragments(fragments);
+        }
+    }
+
+    private static void releaseFragments(ArrayList<Object> fragments) {
+        try {
+            for (Object fragment : fragments) {
+                if (fragment instanceof ReleasableBytesReference content) content.close();
+            }
+        } finally {
+            fragments.clear();
         }
     }
 
@@ -115,10 +108,6 @@ class InboundBytesHandler {
                 }
             }
         }
-    }
-
-    private boolean endOfMessage(Object fragment) {
-        return fragment == InboundDecoder.PING || fragment == InboundDecoder.END_CONTENT || fragment instanceof Exception;
     }
 
     private void forwardFragments(TcpChannel channel, ArrayList<Object> fragments, BiConsumer<TcpChannel, InboundMessage> messageHandler)

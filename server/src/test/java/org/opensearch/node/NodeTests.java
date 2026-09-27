@@ -21,6 +21,8 @@ import org.opensearch.common.settings.Settings;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.util.PageCacheRecycler;
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
+import org.opensearch.core.common.transport.BoundTransportAddress;
+import org.opensearch.core.common.transport.TransportAddress;
 import org.opensearch.core.indices.breaker.CircuitBreakerService;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.env.Environment;
@@ -36,6 +38,7 @@ import org.junit.After;
 import org.junit.Before;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -43,12 +46,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @TestMethodProviders({ JUnit3MethodProvider.class })
 public class NodeTests extends RandomizedTest {
@@ -127,6 +132,60 @@ public class NodeTests extends RandomizedTest {
         assertTrue(TestPlugin.latest.threadPool.scheduler().isShutdown());
     }
 
+    public void testStartupFailureClosesAllocatedServices() throws Exception {
+        Node node = new Node(environment, List.of(pluginInfo()), true);
+        IllegalStateException failure = new IllegalStateException("component startup failed");
+        doThrow(failure).when(TestPlugin.latest.component).start();
+        try {
+            assertSame(failure, assertThrows(IllegalStateException.class, node::start));
+            verify(TestPlugin.latest.component).close();
+            verify(TestPlugin.latest.httpTransport).close();
+            verify(TestPlugin.latest.transport).close();
+            assertTrue(TestPlugin.latest.closed);
+            assertTrue(TestPlugin.latest.threadPool.scheduler().isShutdown());
+        } finally {
+            node.close();
+        }
+    }
+
+    public void testHttpStartupFailurePreservesErrorAndClosesServices() throws Exception {
+        Node node = new Node(environment, List.of(pluginInfo()), true);
+        IllegalStateException failure = new IllegalStateException("HTTP startup failed");
+        doThrow(failure).when(TestPlugin.latest.httpTransport).start();
+        doThrow(new IllegalStateException("HTTP stop failed")).when(TestPlugin.latest.httpTransport).stop();
+        try {
+            assertSame(failure, assertThrows(IllegalStateException.class, node::start));
+            verify(TestPlugin.latest.component).stop();
+            verify(TestPlugin.latest.component).close();
+            verify(TestPlugin.latest.transport).close();
+            verify(TestPlugin.latest.httpTransport).close();
+            assertTrue(TestPlugin.latest.threadPool.scheduler().isShutdown());
+            assertTrue(failure.getSuppressed().length > 0);
+        } finally {
+            node.close();
+        }
+    }
+
+    public void testStopFailureStillClosesEveryService() throws Exception {
+        Node node = new Node(environment, List.of(pluginInfo()), true);
+        node.start();
+        IllegalStateException failure = new IllegalStateException("HTTP stop failed");
+        doThrow(failure).when(TestPlugin.latest.httpTransport).stop();
+        try {
+            assertSame(failure, assertThrows(IllegalStateException.class, node::close));
+            verify(TestPlugin.latest.transport).stop();
+            verify(TestPlugin.latest.component).stop();
+            verify(TestPlugin.latest.httpTransport).close();
+            verify(TestPlugin.latest.transport).close();
+            verify(TestPlugin.latest.component).close();
+            assertTrue(TestPlugin.latest.closedWithPoolRunning);
+            assertTrue(TestPlugin.latest.threadPool.scheduler().isShutdown());
+        } finally {
+            node.close();
+        }
+        verify(TestPlugin.latest.component).close();
+    }
+
     private static PluginInfo pluginInfo() {
         return new PluginInfo("test", "test plugin", "1", Version.CURRENT, "25", TestPlugin.class.getName(), null, List.of(), false);
     }
@@ -147,6 +206,9 @@ public class NodeTests extends RandomizedTest {
 
         public TestPlugin() throws IOException {
             latest = this;
+            TransportAddress address = new TransportAddress(InetAddress.getLoopbackAddress(), 9300);
+            when(transport.boundAddress()).thenReturn(new BoundTransportAddress(new TransportAddress[] { address }, address));
+            when(transport.getResponseHandlers()).thenReturn(new Transport.ResponseHandlers());
             if (failCleanup) {
                 doThrow(new IllegalStateException("component cleanup failed")).when(component).close();
             }

@@ -25,6 +25,10 @@ public record EngineDocument(String id, Map<String, String> fields, byte[] sourc
             bytes += 2L * ((long) field.getKey().length() + field.getValue().length());
         }
         if (bytes > 1_048_576) throw new IllegalArgumentException("document exceeds size limits");
+        fields.forEach((name, value) -> {
+            validateUnicode(name, "document field name");
+            validateUnicode(value, "document field value");
+        });
         source = source.clone();
     }
 
@@ -44,13 +48,17 @@ public record EngineDocument(String id, Map<String, String> fields, byte[] sourc
         if (Objects.requireNonNull(id).isEmpty() || id.length() > 1024 || id.getBytes(StandardCharsets.UTF_8).length > 1024) {
             throw new IllegalArgumentException("document ID must contain 1 to 1024 UTF-8 bytes");
         }
-        for (int i = 0; i < id.length(); i++) {
-            char character = id.charAt(i);
+        validateUnicode(id, "document ID");
+    }
+
+    static void validateUnicode(String value, String description) {
+        for (int i = 0; i < value.length(); i++) {
+            char character = value.charAt(i);
             if (Character.isSurrogate(character)) {
                 if (Character.isHighSurrogate(character) == false
-                    || i + 1 == id.length()
-                    || Character.isLowSurrogate(id.charAt(++i)) == false) {
-                    throw new IllegalArgumentException("document ID must be valid Unicode");
+                    || i + 1 == value.length()
+                    || Character.isLowSurrogate(value.charAt(++i)) == false) {
+                    throw new IllegalArgumentException(description + " must be valid Unicode");
                 }
             }
         }
