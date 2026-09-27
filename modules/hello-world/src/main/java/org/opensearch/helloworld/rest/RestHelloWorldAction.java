@@ -17,6 +17,7 @@ import org.opensearch.http.HttpRequest;
 import org.opensearch.rest.spi.BaseRestHandler;
 import org.opensearch.rest.spi.BytesRestResponse;
 import org.opensearch.rest.spi.RestBuilderListener;
+import org.opensearch.rest.spi.RestOperationCategory;
 import org.opensearch.rest.spi.RestRequest;
 import org.opensearch.rest.spi.RestResponse;
 import org.opensearch.transport.client.node.NodeClient;
@@ -24,6 +25,11 @@ import org.opensearch.transport.client.node.NodeClient;
 import java.util.List;
 
 public class RestHelloWorldAction extends BaseRestHandler {
+    @Override
+    public RestOperationCategory operationCategory() {
+        return RestOperationCategory.MANAGEMENT;
+    }
+
     @Override
     public String getName() {
         return "hello_world";

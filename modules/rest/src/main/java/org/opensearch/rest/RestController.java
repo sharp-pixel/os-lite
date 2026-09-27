@@ -92,6 +92,7 @@ import static org.opensearch.core.rest.RestStatus.BAD_REQUEST;
 import static org.opensearch.core.rest.RestStatus.INTERNAL_SERVER_ERROR;
 import static org.opensearch.core.rest.RestStatus.METHOD_NOT_ALLOWED;
 import static org.opensearch.core.rest.RestStatus.NOT_ACCEPTABLE;
+import static org.opensearch.core.rest.RestStatus.NOT_FOUND;
 import static org.opensearch.core.rest.RestStatus.OK;
 import static org.opensearch.rest.spi.BytesRestResponse.TEXT_CONTENT_TYPE;
 
@@ -135,6 +136,7 @@ public class RestController implements HttpServerTransport.Dispatcher {
     private final CorsHandler corsHandler;
     private final RestTracer httpTracer;
     private final Tracer tracer;
+    private final Set<org.opensearch.rest.spi.RestOperationCategory> enabledCategories;
 
     public RestController(
         Set<RestHeaderDefinition> headersToCopy,
@@ -148,6 +150,35 @@ public class RestController implements HttpServerTransport.Dispatcher {
         RestTracer httpTracer,
         Tracer tracer
     ) {
+        this(
+            headersToCopy,
+            handlerWrapper,
+            client,
+            circuitBreakerService,
+            xContentRegistry,
+            bigArrays,
+            handlingSettings,
+            corsHandler,
+            httpTracer,
+            tracer,
+            java.util.EnumSet.allOf(org.opensearch.rest.spi.RestOperationCategory.class)
+        );
+    }
+
+    public RestController(
+        Set<RestHeaderDefinition> headersToCopy,
+        UnaryOperator<org.opensearch.rest.spi.RestHandler> handlerWrapper,
+        NodeClient client,
+        CircuitBreakerService circuitBreakerService,
+        NamedXContentRegistry xContentRegistry,
+        BigArrays bigArrays,
+        HttpHandlingSettings handlingSettings,
+        CorsHandler corsHandler,
+        RestTracer httpTracer,
+        Tracer tracer,
+        Set<org.opensearch.rest.spi.RestOperationCategory> enabledCategories
+    ) {
+        this.enabledCategories = Set.copyOf(enabledCategories);
         this.headersToCopy = headersToCopy;
         if (handlerWrapper == null) {
             handlerWrapper = h -> h; // passthrough if no wrapper set
@@ -258,6 +289,10 @@ public class RestController implements HttpServerTransport.Dispatcher {
     }
 
     private void registerHandlerNoWrap(HttpRequest.Method method, String path, org.opensearch.rest.spi.RestHandler maybeWrappedHandler) {
+        // Disabled APIs are absent from both dispatch and route discovery, including OPTIONS and Allow.
+        if (enabledCategories.contains(maybeWrappedHandler.operationCategory()) == false) {
+            return;
+        }
         handlers.insertOrUpdate(
             path,
             new RestMethodHandlers(path, maybeWrappedHandler, method),
@@ -548,7 +583,7 @@ public class RestController implements HttpServerTransport.Dispatcher {
         // Get the map of matching handlers for a request, for the full set of HTTP methods.
         final Set<HttpRequest.Method> validMethodSet = getValidHandlerMethodSet(rawPath);
         if (validMethodSet.contains(method) == false) {
-            if (method == HttpRequest.Method.OPTIONS) {
+            if (method == HttpRequest.Method.OPTIONS && validMethodSet.isEmpty() == false) {
                 handleOptionsRequest(channel, validMethodSet);
                 return true;
             }
@@ -641,8 +676,8 @@ public class RestController implements HttpServerTransport.Dispatcher {
             handleUnsupportedHttpMethod(uri, null, channel, getValidHandlerMethodSet(rawPath), e);
             return;
         }
-        // If request has not been handled, fallback to a bad request error.
-        handleBadRequest(uri, requestMethod, channel);
+        // No enabled route matched the path.
+        handleNotFound(uri, requestMethod, channel);
     }
 
     Iterator<RestMethodHandlers> getAllRestMethodHandlers(@Nullable Map<String, String> requestParamsRef, String rawPath) {
@@ -724,8 +759,6 @@ public class RestController implements HttpServerTransport.Dispatcher {
             TEXT_CONTENT_TYPE,
             BytesArray.EMPTY
         );
-        // When we have an OPTIONS HTTP request and no valid handlers, simply send OK by default (with the Access Control Origin header
-        // which gets automatically added).
         if (validMethodSet.isEmpty() == false) {
             bytesRestResponse.addHeader("Allow", Strings.collectionToDelimitedString(validMethodSet, ","));
         }
@@ -733,10 +766,9 @@ public class RestController implements HttpServerTransport.Dispatcher {
     }
 
     /**
-     * Handle a requests with no candidate handlers (return a 400 Bad Request
-     * error).
+     * Handle requests with no enabled candidate handlers (return a 404 Not Found error).
      */
-    private void handleBadRequest(String uri, HttpRequest.Method method, org.opensearch.rest.spi.RestChannel channel) throws IOException {
+    private void handleNotFound(String uri, HttpRequest.Method method, org.opensearch.rest.spi.RestChannel channel) throws IOException {
         try (XContentBuilder builder = channel.newErrorBuilder()) {
             builder.startObject();
             {
@@ -750,7 +782,7 @@ public class RestController implements HttpServerTransport.Dispatcher {
                 }
             }
             builder.endObject();
-            channel.sendResponse(new org.opensearch.rest.spi.BytesRestResponse(BAD_REQUEST, builder));
+            channel.sendResponse(new org.opensearch.rest.spi.BytesRestResponse(NOT_FOUND, builder));
         }
     }
 

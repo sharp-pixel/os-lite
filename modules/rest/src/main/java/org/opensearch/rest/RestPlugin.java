@@ -9,6 +9,7 @@
 package org.opensearch.rest;
 
 import org.opensearch.common.settings.ClusterSettings;
+import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.core.indices.breaker.CircuitBreakerService;
@@ -21,6 +22,7 @@ import org.opensearch.plugins.Plugin;
 import org.opensearch.plugins.PluginResources;
 import org.opensearch.rest.spi.RestHandler;
 import org.opensearch.rest.spi.RestHandlerPlugin;
+import org.opensearch.rest.spi.RestOperationCategory;
 import org.opensearch.tasks.Task;
 import org.opensearch.telemetry.tracing.Tracer;
 
@@ -39,8 +41,21 @@ import java.util.function.UnaryOperator;
  * @opensearch.internal
  */
 public class RestPlugin extends Plugin implements NetworkPlugin, ExtensiblePlugin {
+    /** Node-local API capabilities; all categories are enabled by default. */
+    public static final Setting<List<RestOperationCategory>> API_CATEGORIES = Setting.listSetting(
+        "rest.api.categories",
+        List.of("search", "indexing", "management"),
+        RestOperationCategory::fromString,
+        Setting.Property.NodeScope
+    );
+
     private PluginResources pluginResources;
-    private List<RestHandlerPlugin> restHandlerPlugins = new ArrayList<>();
+    private final List<RestHandlerPlugin> restHandlerPlugins = new ArrayList<>();
+
+    @Override
+    public List<Setting<?>> getSettings() {
+        return List.of(API_CATEGORIES);
+    }
 
     @Override
     public Collection<Object> createComponents(PluginResources pluginResources) {
@@ -66,7 +81,8 @@ public class RestPlugin extends Plugin implements NetworkPlugin, ExtensiblePlugi
             HttpHandlingSettings.fromSettings(settings),
             CorsHandler.fromSettings(settings),
             new RestTracer(settings, clusterSettings),
-            tracer
+            tracer,
+            Set.copyOf(API_CATEGORIES.get(settings))
         );
         for (RestHandlerPlugin restHandlerPlugin : restHandlerPlugins) {
             for (RestHandler restHandler : restHandlerPlugin.getRestHandlers()) {
@@ -78,7 +94,9 @@ public class RestPlugin extends Plugin implements NetworkPlugin, ExtensiblePlugi
 
     @Override
     public void accept(Plugin plugin) {
-        RestHandlerPlugin restHandlerPlugin = (RestHandlerPlugin) plugin;
-        restHandlerPlugins.add(restHandlerPlugin);
+        if (plugin instanceof RestHandlerPlugin == false) {
+            throw new IllegalArgumentException("REST extensions must implement RestHandlerPlugin: " + plugin.getClass().getName());
+        }
+        restHandlerPlugins.add((RestHandlerPlugin) plugin);
     }
 }

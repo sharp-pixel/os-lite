@@ -7,9 +7,9 @@
  */
 
 opensearchplugin {
-    description = 'A demo plugin to confirm that we can add actions'
-    classname = 'org.opensearch.helloworld.HelloWorldPlugin'
-    extendedPlugins = ['management-api']
+    description = 'Management REST API extension hub'
+    classname = 'org.opensearch.api.management.ManagementApiPlugin'
+    extendedPlugins = ['rest']
 }
 
 repositories {
@@ -21,10 +21,5 @@ repositories {
 testingConventions.enabled = false
 
 dependencies {
-    testImplementation libs.junit
-    testImplementation libs.hamcrest
-    testImplementation libs.randomizedrunner
-    testImplementation libs.lucene.test.framework
-    testRuntimeOnly libs.httpcore5
     compileOnly project(':modules:rest:spi')
 }

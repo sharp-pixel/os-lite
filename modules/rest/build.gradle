@@ -21,5 +21,9 @@ testingConventions.enabled = false
 
 dependencies {
     testImplementation libs.bundles.unit.test
+    testImplementation project(':modules:search-api')
+    testImplementation project(':modules:indexing-api')
+    testImplementation project(':modules:management-api')
+    testImplementation project(':modules:hello-world')
     api project('spi')
 }

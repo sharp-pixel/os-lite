@@ -57,6 +57,14 @@ public interface RestHandler {
      */
     void handleRequest(RestRequest request, RestChannel channel, NodeClient client) throws Exception;
 
+    /**
+     * Semantic category of all routes served by this handler. Split handlers that serve different categories.
+     * Legacy handlers default to management; search and indexing handlers must declare their category explicitly.
+     */
+    default RestOperationCategory operationCategory() {
+        return RestOperationCategory.MANAGEMENT;
+    }
+
     default boolean canTripCircuitBreaker() {
         return true;
     }
@@ -154,6 +162,11 @@ public interface RestHandler {
         @Override
         public void handleRequest(RestRequest request, RestChannel channel, NodeClient client) throws Exception {
             delegate.handleRequest(request, channel, client);
+        }
+
+        @Override
+        public RestOperationCategory operationCategory() {
+            return delegate.operationCategory();
         }
 
         @Override

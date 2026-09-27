@@ -83,6 +83,11 @@ public class DeprecationRestHandler implements org.opensearch.rest.spi.RestHandl
     }
 
     @Override
+    public org.opensearch.rest.spi.RestOperationCategory operationCategory() {
+        return handler.operationCategory();
+    }
+
+    @Override
     public boolean supportsContentStream() {
         return handler.supportsContentStream();
     }
