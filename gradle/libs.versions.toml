@@ -1,6 +1,7 @@
 [versions]
 opensearch        = "3.6.0"
 lucene            = "10.4.0"
+nebula_info       = "16.0.2"
 
 bundled_jdk_vendor = "adoptium"
 bundled_jdk = "25.0.2+10"
@@ -102,6 +103,7 @@ arrow                 = "18.1.0"
 flatbuffers           = "2.0.0"
 
 [libraries]
+nebula-info = { group = "com.netflix.nebula", name = "gradle-info-plugin", version.ref = "nebula_info" }
 jackson-core = { group = "com.fasterxml.jackson.core", name = "jackson-core", version.ref = "jackson" }
 bytebuddy = { group = "net.bytebuddy", name = "byte-buddy", version.ref = "bytebuddy" }
 bytebuddy-agent = { group = "net.bytebuddy", name = "byte-buddy-agent", version.ref = "bytebuddy" }

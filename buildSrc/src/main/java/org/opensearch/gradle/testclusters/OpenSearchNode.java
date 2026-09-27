@@ -1176,8 +1176,8 @@ public class OpenSearchNode implements TestClusterConfiguration {
             baseConfig.put("node.name", nodeName);
         }
         // baseConfig.put("path.repo", confPathRepo.toAbsolutePath().toString());
-        // baseConfig.put("path.data", confPathData.toAbsolutePath().toString());
-        // baseConfig.put("path.logs", confPathLogs.toAbsolutePath().toString());
+        baseConfig.put("path.data", confPathData.toAbsolutePath().toString());
+        baseConfig.put("path.logs", confPathLogs.toAbsolutePath().toString());
         // baseConfig.put("path.shared_data", workingDir.resolve("sharedData").toString());
         // baseConfig.put("node.attr.testattr", "test");
         if (StringUtils.isNotBlank(zone)) {

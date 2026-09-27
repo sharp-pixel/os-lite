@@ -67,6 +67,7 @@ public final class ClusterSettings extends AbstractScopedSettings {
                 BreakerSettings.CIRCUIT_BREAKER_OVERHEAD_SETTING,
                 ClusterName.CLUSTER_NAME_SETTING,
                 Environment.PATH_HOME_SETTING,
+                Environment.PATH_DATA_SETTING,
                 Environment.PATH_LOGS_SETTING,
                 HierarchyCircuitBreakerService.USE_REAL_MEMORY_USAGE_SETTING,
                 HierarchyCircuitBreakerService.TOTAL_CIRCUIT_BREAKER_LIMIT_SETTING,

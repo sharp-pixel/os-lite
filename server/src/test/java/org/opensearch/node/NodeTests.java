@@ -68,6 +68,7 @@ public class NodeTests extends RandomizedTest {
         TestPlugin.failCleanup = false;
         Settings settings = Settings.builder()
             .put("path.home", newTempDir().toString())
+            .put("path.data", newTempDir().toString())
             .put("node.name", "lifecycle-test")
             .put("transport.type.default", "test")
             .put("http.type.default", "test")
