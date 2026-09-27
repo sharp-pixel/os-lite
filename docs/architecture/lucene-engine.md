@@ -2,6 +2,56 @@
 
 Status: phases 1–5 implemented as experimental local and filesystem-repository profiles. The repository profile supports independent writer/reader nodes, durable snapshot publication, manual writer fencing, and checkpoint waits. Lucene is packaged exclusively with its provider; the host starts and serves metadata without it. See [snapshot publication](snapshot-publication.md) for configuration and operational limits.
 
+## Architecture overview
+
+The diagram shows the HTTP request path and storage boundaries. Components inside
+the process are modules, not separate services. Dashed edges show the optional
+filesystem snapshot repository profile.
+
+```mermaid
+flowchart TB
+    client["HTTP client"]
+
+    subgraph process["os-lite process"]
+        netty["transport-netty4 — HTTP server"]
+        rest["rest — routing and HTTP-to-REST adaptation"]
+        apis["Index API modules — management, indexing, search"]
+        actions["server — NodeClient and action dispatch"]
+        indexService["index-service — schemas, catalog, document operations"]
+        engine["engine — provider discovery and shard lifecycle"]
+        snapshots["snapshot-filesystem — optional repository provider"]
+
+        subgraph isolation["Isolated engine classloader"]
+            lucene["lucene-engine — Lucene readers, writers and queries"]
+        end
+    end
+
+    catalog[("Local index catalog")]
+    shards[("Local shard files and durable commits")]
+    repository[("Shared filesystem snapshot repository")]
+
+    client -->|"HTTP / JSON"| netty
+    netty -->|"HTTP dispatcher"| rest
+    rest --> apis
+    apis -->|"Typed index-api actions"| actions
+    actions --> indexService
+    indexService -->|"Local profile"| catalog
+    indexService -->|"engine-api contracts"| engine
+    engine --> lucene
+    lucene --> shards
+    indexService -.->|"Optional snapshot publication and retrieval"| snapshots
+    snapshots -.-> repository
+```
+
+The server supplies bootstrap, plugin loading, lifecycle, settings, networking
+contracts, and action dispatch. REST and indexing functionality live in modules;
+the host and API contracts remain independent of Lucene.
+
+Writes commit before acknowledgement. Refresh makes committed documents visible
+to get and search. Independent writer and reader nodes can exchange committed
+snapshots through a shared repository; automatic shard allocation, replication,
+and failover are not implemented.
+
 ## Decision
 
 Introduce a shard-level engine contract with separate reader and writer interfaces. Implement it in a Lucene plugin. Keep index metadata, shard placement, routing, transport actions, and REST handling outside the engine implementation.
