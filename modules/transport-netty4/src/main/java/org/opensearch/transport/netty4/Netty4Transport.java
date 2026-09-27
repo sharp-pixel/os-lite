@@ -90,6 +90,12 @@ import static org.opensearch.common.util.concurrent.ConcurrentCollections.newCon
  * sending out ping requests to other nodes.
  */
 public class Netty4Transport extends TcpTransport {
+    /** Explicit development override for exposing the clear-text native transport beyond loopback. */
+    public static final Setting<Boolean> SETTING_TRANSPORT_ALLOW_INSECURE_REMOTE = Setting.boolSetting(
+        "transport.allow_insecure_remote",
+        false,
+        Setting.Property.NodeScope
+    );
     private static final Logger logger = LogManager.getLogger(Netty4Transport.class);
 
     public static final Setting<Integer> WORKER_COUNT = new Setting<>(
@@ -173,6 +179,26 @@ public class Netty4Transport extends TcpTransport {
                 doStop();
             }
         }
+    }
+
+    private void ensureSecureBinding(InetSocketAddress address) {
+        if (isSecure() == false
+            && SETTING_TRANSPORT_ALLOW_INSECURE_REMOTE.get(settings) == false
+            && address.getAddress().isLoopbackAddress() == false) {
+            throw new IllegalStateException(
+                "refusing to expose the clear-text native transport on ["
+                    + address
+                    + "]; configure a secure transport or explicitly set ["
+                    + SETTING_TRANSPORT_ALLOW_INSECURE_REMOTE.getKey()
+                    + "] to [true] for development"
+            );
+        }
+    }
+
+    /** Returns whether this transport protects remote connections. */
+    @Override
+    public boolean isSecure() {
+        return false;
     }
 
     private Bootstrap createClientBootstrap(SharedGroupFactory.SharedGroup sharedGroup) {
@@ -331,6 +357,7 @@ public class Netty4Transport extends TcpTransport {
 
     @Override
     protected Netty4TcpServerChannel bind(String name, InetSocketAddress address) {
+        ensureSecureBinding(address);
         Channel channel = serverBootstraps.get(name).bind(address).syncUninterruptibly().channel();
         Netty4TcpServerChannel esChannel = new Netty4TcpServerChannel(channel);
         channel.attr(SERVER_CHANNEL_KEY).set(esChannel);
@@ -356,7 +383,7 @@ public class Netty4Transport extends TcpTransport {
             NetUtils.tryEnsureReasonableKeepAliveConfig(((Netty4NioSocketChannel) ch).javaChannel());
             ch.pipeline().addLast("logging", new OpenSearchLoggingHandler());
             // using a dot as a prefix means this cannot come from any settings parsed
-            ch.pipeline().addLast("dispatcher", new Netty4MessageChannelHandler(pageCacheRecycler, Netty4Transport.this));
+            ch.pipeline().addLast("dispatcher", new Netty4MessageChannelHandler(pageCacheRecycler, Netty4Transport.this, false));
         }
 
         @Override
@@ -384,7 +411,7 @@ public class Netty4Transport extends TcpTransport {
             ch.attr(CHANNEL_KEY).set(nettyTcpChannel);
             ch.pipeline().addLast("byte_buf_sizer", sizer);
             ch.pipeline().addLast("logging", new OpenSearchLoggingHandler());
-            ch.pipeline().addLast("dispatcher", new Netty4MessageChannelHandler(pageCacheRecycler, Netty4Transport.this));
+            ch.pipeline().addLast("dispatcher", new Netty4MessageChannelHandler(pageCacheRecycler, Netty4Transport.this, true));
             serverAcceptedChannel(nettyTcpChannel);
         }
 
@@ -393,6 +420,10 @@ public class Netty4Transport extends TcpTransport {
             ExceptionsHelper.maybeDieOnAnotherThread(cause);
             super.exceptionCaught(ctx, cause);
         }
+    }
+
+    long initialMessageTimeoutMillis() {
+        return TransportSettings.CONNECT_TIMEOUT.get(settings).millis();
     }
 
     private void addClosedExceptionLogger(Channel channel) {

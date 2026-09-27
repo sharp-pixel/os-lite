@@ -22,14 +22,19 @@ import org.opensearch.plugins.Plugin;
 import org.opensearch.plugins.PluginResources;
 import org.opensearch.rest.spi.RestHandler;
 import org.opensearch.rest.spi.RestHandlerPlugin;
+import org.opensearch.rest.spi.RestHeaderDefinition;
 import org.opensearch.rest.spi.RestOperationCategory;
+import org.opensearch.rest.spi.RestSecurityExtension;
 import org.opensearch.tasks.Task;
 import org.opensearch.telemetry.tracing.Tracer;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -51,6 +56,7 @@ public class RestPlugin extends Plugin implements NetworkPlugin, ExtensiblePlugi
 
     private PluginResources pluginResources;
     private final List<RestHandlerPlugin> restHandlerPlugins = new ArrayList<>();
+    private final List<RestSecurityExtension> securityExtensions = new ArrayList<>();
 
     @Override
     public List<Setting<?>> getSettings() {
@@ -71,9 +77,31 @@ public class RestPlugin extends Plugin implements NetworkPlugin, ExtensiblePlugi
         ClusterSettings clusterSettings,
         Tracer tracer
     ) {
+        final Map<String, RestHeaderDefinition> headersByName = new LinkedHashMap<>();
+        addHeaderDefinition(headersByName, new RestHeaderDefinition(Task.X_OPAQUE_ID, false));
+        for (RestSecurityExtension extension : securityExtensions) {
+            for (RestHeaderDefinition header : extension.getRestHeaders()) {
+                addHeaderDefinition(headersByName, Objects.requireNonNull(header, "REST header definition must not be null"));
+            }
+        }
+        final Set<RestHeaderDefinition> headersToCopy = Set.copyOf(headersByName.values());
+        UnaryOperator<RestHandler> handlerWrapper = null;
+        for (RestSecurityExtension extension : securityExtensions) {
+            UnaryOperator<RestHandler> candidate = extension.getRestHandlerWrapper(
+                Objects.requireNonNull(pluginResources.threadPool(), "thread pool is required by REST security extensions")
+                    .getThreadContext(),
+                headersToCopy
+            );
+            if (candidate != null) {
+                if (handlerWrapper != null) {
+                    throw new IllegalArgumentException("more than one REST security extension provided a handler wrapper");
+                }
+                handlerWrapper = candidate;
+            }
+        }
         RestController restController = new RestController(
-            Set.of(new RestHeaderDefinition(Task.X_OPAQUE_ID, false)),
-            UnaryOperator.identity(),
+            headersToCopy,
+            handlerWrapper,
             pluginResources.nodeClient(),
             circuitBreakerService,
             pluginResources.namedXContentRegistry(),
@@ -94,9 +122,27 @@ public class RestPlugin extends Plugin implements NetworkPlugin, ExtensiblePlugi
 
     @Override
     public void accept(Plugin plugin) {
-        if (plugin instanceof RestHandlerPlugin == false) {
-            throw new IllegalArgumentException("REST extensions must implement RestHandlerPlugin: " + plugin.getClass().getName());
+        boolean accepted = false;
+        if (plugin instanceof RestHandlerPlugin restHandlerPlugin) {
+            restHandlerPlugins.add(restHandlerPlugin);
+            accepted = true;
         }
-        restHandlerPlugins.add((RestHandlerPlugin) plugin);
+        if (plugin instanceof RestSecurityExtension securityExtension) {
+            securityExtensions.add(securityExtension);
+            accepted = true;
+        }
+        if (accepted == false) {
+            throw new IllegalArgumentException(
+                "REST extensions must implement RestHandlerPlugin or RestSecurityExtension: " + plugin.getClass().getName()
+            );
+        }
+    }
+
+    private static void addHeaderDefinition(Map<String, RestHeaderDefinition> headersByName, RestHeaderDefinition header) {
+        final String normalizedName = header.getName().toLowerCase(Locale.ROOT);
+        RestHeaderDefinition existing = headersByName.putIfAbsent(normalizedName, header);
+        if (existing != null && existing.isMultiValueAllowed() != header.isMultiValueAllowed()) {
+            throw new IllegalArgumentException("conflicting REST header definitions for [" + header.getName() + "]");
+        }
     }
 }

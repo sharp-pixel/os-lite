@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
@@ -84,11 +85,18 @@ public final class PidFile {
                 Files.createDirectories(parent);
             }
         }
-        if (Files.exists(path) && Files.isRegularFile(path) == false) {
+        if (Files.exists(path, LinkOption.NOFOLLOW_LINKS) && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) == false) {
             throw new IllegalArgumentException(path + " exists but is not a regular file");
         }
 
-        try (OutputStream stream = Files.newOutputStream(path, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+        try (
+            OutputStream stream = Files.newOutputStream(
+                path,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING,
+                LinkOption.NOFOLLOW_LINKS
+            )
+        ) {
             stream.write(Long.toString(pid).getBytes(StandardCharsets.UTF_8));
         }
 

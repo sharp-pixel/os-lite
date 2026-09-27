@@ -37,6 +37,7 @@ import org.opensearch.OpenSearchException;
 import org.opensearch.common.bytes.ReleasableBytesReference;
 import org.opensearch.common.lease.Releasables;
 import org.opensearch.common.util.PageCacheRecycler;
+import org.opensearch.common.util.concurrent.FutureUtils;
 import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.InboundPipeline;
@@ -46,6 +47,8 @@ import org.opensearch.transport.Transports;
 import java.nio.channels.ClosedChannelException;
 import java.util.ArrayDeque;
 import java.util.Queue;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
@@ -66,9 +69,12 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
 
     private WriteOperation currentWrite;
     private final InboundPipeline pipeline;
+    private final long initialMessageTimeoutMillis;
+    private ScheduledFuture<?> initialMessageTimeoutFuture;
 
-    Netty4MessageChannelHandler(PageCacheRecycler recycler, Netty4Transport transport) {
+    Netty4MessageChannelHandler(PageCacheRecycler recycler, Netty4Transport transport, boolean serverChannel) {
         this.transport = transport;
+        this.initialMessageTimeoutMillis = serverChannel ? transport.initialMessageTimeoutMillis() : 0;
         final ThreadPool threadPool = transport.getThreadPool();
         final Transport.RequestHandlers requestHandlers = transport.getRequestHandlers();
         this.pipeline = new InboundPipeline(
@@ -78,8 +84,20 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
             threadPool::relativeTimeInMillis,
             transport.getInflightBreaker(),
             requestHandlers::getHandler,
-            transport::inboundMessage
+            (channel, message) -> {
+                cancelInitialMessageTimeout();
+                transport.inboundMessage(channel, message);
+            }
         );
+    }
+
+    @Override
+    public void handlerAdded(ChannelHandlerContext context) throws Exception {
+        if (initialMessageTimeoutMillis > 0) {
+            initialMessageTimeoutFuture = context.executor()
+                .schedule(() -> context.close(), initialMessageTimeoutMillis, TimeUnit.MILLISECONDS);
+        }
+        super.handlerAdded(context);
     }
 
     @Override
@@ -140,9 +158,23 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         assert Transports.assertDefaultThreadContext(transport.getThreadPool().getThreadContext());
+        cancelInitialMessageTimeout();
         doFlush(ctx);
         Releasables.closeWhileHandlingException(pipeline);
         super.channelInactive(ctx);
+    }
+
+    @Override
+    public void handlerRemoved(ChannelHandlerContext context) throws Exception {
+        cancelInitialMessageTimeout();
+        super.handlerRemoved(context);
+    }
+
+    private void cancelInitialMessageTimeout() {
+        if (initialMessageTimeoutFuture != null) {
+            FutureUtils.cancel(initialMessageTimeoutFuture);
+            initialMessageTimeoutFuture = null;
+        }
     }
 
     private void doFlush(ChannelHandlerContext ctx) {

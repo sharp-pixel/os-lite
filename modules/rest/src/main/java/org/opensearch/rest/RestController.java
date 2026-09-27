@@ -63,6 +63,7 @@ import org.opensearch.http.HttpRequest;
 import org.opensearch.http.HttpServerTransport;
 import org.opensearch.http.StreamingHttpChannel;
 import org.opensearch.http.UrlUtils;
+import org.opensearch.rest.spi.RestHeaderDefinition;
 import org.opensearch.telemetry.tracing.Span;
 import org.opensearch.telemetry.tracing.SpanBuilder;
 import org.opensearch.telemetry.tracing.SpanScope;

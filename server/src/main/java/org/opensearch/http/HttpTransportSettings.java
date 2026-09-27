@@ -119,7 +119,7 @@ public final class HttpTransportSettings {
     public static final Setting<Integer> SETTING_HTTP_PUBLISH_PORT = intSetting("http.publish_port", -1, -1, Property.NodeScope);
     public static final Setting<Boolean> SETTING_HTTP_DETAILED_ERRORS_ENABLED = Setting.boolSetting(
         "http.detailed_errors.enabled",
-        true,
+        false,
         Property.NodeScope
     );
     public static final Setting<Boolean> SETTING_HTTP_CONTENT_TYPE_REQUIRED = new Setting<>(
@@ -174,10 +174,10 @@ public final class HttpTransportSettings {
     // note, parsing cookies was fixed in netty 3.5.1 regarding stack allocation, but still, currently, we don't need cookies
     public static final Setting<Boolean> SETTING_HTTP_RESET_COOKIES = Setting.boolSetting("http.reset_cookies", false, Property.NodeScope);
 
-    // A default of 0 means that by default there is no read timeout
+    // Close connections that stop making progress while sending a request.
     public static final Setting<TimeValue> SETTING_HTTP_READ_TIMEOUT = Setting.timeSetting(
         "http.read_timeout",
-        new TimeValue(0),
+        TimeValue.timeValueSeconds(30),
         new TimeValue(0),
         Property.NodeScope
     );

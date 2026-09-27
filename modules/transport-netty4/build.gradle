@@ -51,6 +51,7 @@ repositories {
 }
 
 dependencies {
+  testImplementation libs.bundles.unit.test
   // network stack
   api "io.netty:netty-buffer:${versions.netty}"
   api "io.netty:netty-codec-base:${versions.netty}"

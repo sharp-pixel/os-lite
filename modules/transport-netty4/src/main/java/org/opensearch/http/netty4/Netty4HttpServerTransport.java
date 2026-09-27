@@ -44,6 +44,7 @@ import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.common.util.net.NetUtils;
 import org.opensearch.core.common.unit.ByteSizeUnit;
 import org.opensearch.core.common.unit.ByteSizeValue;
+import org.opensearch.core.indices.breaker.CircuitBreakerService;
 import org.opensearch.http.AbstractHttpServerTransport;
 import org.opensearch.http.HttpChannel;
 import org.opensearch.http.HttpHandlingSettings;
@@ -171,6 +172,13 @@ public class Netty4HttpServerTransport extends AbstractHttpServerTransport {
 
     public static final Setting<Integer> SETTING_HTTP_WORKER_COUNT = Setting.intSetting("http.netty.worker_count", 0, Property.NodeScope);
 
+    /** Explicit development override for exposing the clear-text HTTP transport beyond loopback. */
+    public static final Setting<Boolean> SETTING_HTTP_ALLOW_INSECURE_REMOTE = Setting.boolSetting(
+        "http.allow_insecure_remote",
+        false,
+        Property.NodeScope
+    );
+
     public static final Setting<ByteSizeValue> SETTING_HTTP_NETTY_RECEIVE_PREDICTOR_SIZE = Setting.byteSizeSetting(
         "http.netty.receive_predictor_size",
         new ByteSizeValue(64, ByteSizeUnit.KB),
@@ -184,6 +192,7 @@ public class Netty4HttpServerTransport extends AbstractHttpServerTransport {
     private final int pipeliningMaxEvents;
 
     private final SharedGroupFactory sharedGroupFactory;
+    private final CircuitBreakerService circuitBreakerService;
     private final RecvByteBufAllocator recvByteBufAllocator;
     private final int readTimeoutMillis;
 
@@ -204,6 +213,7 @@ public class Netty4HttpServerTransport extends AbstractHttpServerTransport {
         NetworkService networkService,
         ThreadPool threadPool,
         Dispatcher dispatcher,
+        CircuitBreakerService circuitBreakerService,
         SharedGroupFactory sharedGroupFactory,
         Tracer tracer
     ) {
@@ -211,6 +221,7 @@ public class Netty4HttpServerTransport extends AbstractHttpServerTransport {
         Netty4Utils.setAvailableProcessors(OpenSearchExecutors.NODE_PROCESSORS_SETTING.get(settings));
         NettyAllocator.logAllocatorDescriptionIfNeeded();
         this.sharedGroupFactory = sharedGroupFactory;
+        this.circuitBreakerService = circuitBreakerService;
 
         this.maxChunkSize = SETTING_HTTP_MAX_CHUNK_SIZE.get(settings);
         this.maxHeaderSize = SETTING_HTTP_MAX_HEADER_SIZE.get(settings);
@@ -316,8 +327,28 @@ public class Netty4HttpServerTransport extends AbstractHttpServerTransport {
         }
     }
 
+    private void ensureSecureBinding(InetSocketAddress address) {
+        if (isSecure() == false
+            && SETTING_HTTP_ALLOW_INSECURE_REMOTE.get(settings) == false
+            && address.getAddress().isLoopbackAddress() == false) {
+            throw new IllegalStateException(
+                "refusing to expose the clear-text HTTP transport on ["
+                    + address
+                    + "]; configure a secure HTTP transport or explicitly set ["
+                    + SETTING_HTTP_ALLOW_INSECURE_REMOTE.getKey()
+                    + "] to [true] for development"
+            );
+        }
+    }
+
+    /** Returns whether this transport protects remote connections. */
+    protected boolean isSecure() {
+        return false;
+    }
+
     @Override
     protected HttpServerChannel bind(InetSocketAddress socketAddress) throws Exception {
+        ensureSecureBinding(socketAddress);
         ChannelFuture future = serverBootstrap.bind(socketAddress).sync();
         Channel channel = future.channel();
         Netty4HttpServerChannel httpServerChannel = new Netty4HttpServerChannel(channel);
@@ -433,7 +464,12 @@ public class Netty4HttpServerTransport extends AbstractHttpServerTransport {
                     pipeline.addAfter(ctx.name(), "handler", getRequestHandler());
                     pipeline.replace(this, "header_verifier", transport.createHeaderVerifier());
                     pipeline.addAfter("header_verifier", "decoder_compress", transport.createDecompressor());
-                    pipeline.addAfter("decoder_compress", "aggregator", aggregator);
+                    pipeline.addAfter(
+                        "decoder_compress",
+                        "content_breaker",
+                        new Netty4HttpContentCircuitBreakerHandler(transport.circuitBreakerService, transport.readTimeoutMillis)
+                    );
+                    pipeline.addAfter("content_breaker", "aggregator", aggregator);
                     if (handlingSettings.isCompression()) {
                         pipeline.addAfter(
                             "aggregator",
@@ -460,6 +496,10 @@ public class Netty4HttpServerTransport extends AbstractHttpServerTransport {
             pipeline.addLast("decoder", decoder);
             pipeline.addLast("header_verifier", transport.createHeaderVerifier());
             pipeline.addLast("decoder_compress", transport.createDecompressor());
+            pipeline.addLast(
+                "content_breaker",
+                new Netty4HttpContentCircuitBreakerHandler(transport.circuitBreakerService, transport.readTimeoutMillis)
+            );
             pipeline.addLast("encoder", new HttpResponseEncoder());
             final HttpObjectAggregator aggregator = new HttpObjectAggregator(handlingSettings.getMaxContentLength());
             aggregator.setMaxCumulationBufferComponents(transport.maxCompositeBufferComponents);
@@ -509,7 +549,11 @@ public class Netty4HttpServerTransport extends AbstractHttpServerTransport {
                         .addLast("byte_buf_sizer", byteBufSizer)
                         .addLast("read_timeout", new ReadTimeoutHandler(transport.readTimeoutMillis, TimeUnit.MILLISECONDS))
                         .addLast("header_verifier", transport.createHeaderVerifier())
-                        .addLast("decoder_decompress", transport.createDecompressor());
+                        .addLast("decoder_decompress", transport.createDecompressor())
+                        .addLast(
+                            "content_breaker",
+                            new Netty4HttpContentCircuitBreakerHandler(transport.circuitBreakerService, transport.readTimeoutMillis)
+                        );
 
                     if (handlingSettings.isCompression()) {
                         childChannel.pipeline()

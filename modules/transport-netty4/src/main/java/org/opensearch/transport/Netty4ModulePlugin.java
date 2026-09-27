@@ -77,11 +77,13 @@ public class Netty4ModulePlugin extends Plugin implements NetworkPlugin {
             Netty4HttpServerTransport.SETTING_HTTP_NETTY_MAX_COMPOSITE_BUFFER_COMPONENTS,
             Netty4HttpServerTransport.SETTING_HTTP_WORKER_COUNT,
             Netty4HttpServerTransport.SETTING_HTTP_NETTY_RECEIVE_PREDICTOR_SIZE,
+            Netty4HttpServerTransport.SETTING_HTTP_ALLOW_INSECURE_REMOTE,
             Netty4Transport.WORKER_COUNT,
             Netty4Transport.NETTY_RECEIVE_PREDICTOR_SIZE,
             Netty4Transport.NETTY_RECEIVE_PREDICTOR_MIN,
             Netty4Transport.NETTY_RECEIVE_PREDICTOR_MAX,
-            Netty4Transport.NETTY_BOSS_COUNT
+            Netty4Transport.NETTY_BOSS_COUNT,
+            Netty4Transport.SETTING_TRANSPORT_ALLOW_INSECURE_REMOTE
         );
     }
 
@@ -136,7 +138,15 @@ public class Netty4ModulePlugin extends Plugin implements NetworkPlugin {
     ) {
         return Collections.singletonMap(
             NETTY_HTTP_TRANSPORT_NAME,
-            () -> new Netty4HttpServerTransport(settings, networkService, threadPool, dispatcher, getSharedGroupFactory(settings), tracer)
+            () -> new Netty4HttpServerTransport(
+                settings,
+                networkService,
+                threadPool,
+                dispatcher,
+                circuitBreakerService,
+                getSharedGroupFactory(settings),
+                tracer
+            )
         );
     }
 
@@ -161,6 +171,7 @@ public class Netty4ModulePlugin extends Plugin implements NetworkPlugin {
                 networkService,
                 threadPool,
                 dispatcher,
+                circuitBreakerService,
                 getSharedGroupFactory(settings),
                 secureHttpTransportSettingsProvider,
                 tracer

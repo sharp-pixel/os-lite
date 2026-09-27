@@ -32,6 +32,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.common.network.NetworkService;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.core.indices.breaker.CircuitBreakerService;
 import org.opensearch.http.HttpChannel;
 import org.opensearch.http.HttpHandlingSettings;
 import org.opensearch.http.HttpServerTransport;
@@ -78,11 +79,12 @@ public class SecureNetty4HttpServerTransport extends Netty4HttpServerTransport {
         final NetworkService networkService,
         final ThreadPool threadPool,
         final Dispatcher dispatcher,
+        final CircuitBreakerService circuitBreakerService,
         final SharedGroupFactory sharedGroupFactory,
         final SecureHttpTransportSettingsProvider secureHttpTransportSettingsProvider,
         final Tracer tracer
     ) {
-        super(settings, networkService, threadPool, dispatcher, sharedGroupFactory, tracer);
+        super(settings, networkService, threadPool, dispatcher, circuitBreakerService, sharedGroupFactory, tracer);
 
         this.secureHttpTransportSettingsProvider = secureHttpTransportSettingsProvider;
         this.exceptionHandler = secureHttpTransportSettingsProvider.buildHttpServerExceptionHandler(settings, this)
@@ -122,6 +124,11 @@ public class SecureNetty4HttpServerTransport extends Netty4HttpServerTransport {
                 return Optional.empty();
             }
         });
+    }
+
+    @Override
+    protected boolean isSecure() {
+        return true;
     }
 
     @Override

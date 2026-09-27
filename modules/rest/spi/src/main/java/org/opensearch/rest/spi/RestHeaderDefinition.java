@@ -30,7 +30,9 @@
  * GitHub history for details.
  */
 
-package org.opensearch.rest;
+package org.opensearch.rest.spi;
+
+import java.util.Objects;
 
 /**
  * A definition for an http header that should be copied to the {@link org.opensearch.common.util.concurrent.ThreadContext} when
@@ -47,7 +49,10 @@ public final class RestHeaderDefinition {
     private final boolean multiValueAllowed;
 
     public RestHeaderDefinition(String name, boolean multiValueAllowed) {
-        this.name = name;
+        this.name = Objects.requireNonNull(name, "name must not be null");
+        if (name.isBlank()) {
+            throw new IllegalArgumentException("header name must not be blank");
+        }
         this.multiValueAllowed = multiValueAllowed;
     }
 

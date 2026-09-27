@@ -123,6 +123,11 @@ public class SecureNetty4Transport extends Netty4Transport {
     }
 
     @Override
+    public boolean isSecure() {
+        return true;
+    }
+
+    @Override
     protected ChannelHandler getServerChannelInitializer(String name) {
         return new SSLServerChannelInitializer(name);
     }

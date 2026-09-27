@@ -38,6 +38,19 @@ This is an HTTP API capability setting, not authorization or a transport action 
 Internal `NodeClient` and transport actions are unaffected. It does not establish separate
 indexing/search compute pools, shared index storage, or cross-node request forwarding.
 
+## Securing requests
+
+An authentication plugin implements `RestSecurityExtension` from `rest:spi` and declares the
+`rest` plugin as its extension target. `getRestHeaders()` declares the credentials or identity
+headers that REST copies into `ThreadContext`. `getRestHandlerWrapper()` installs the authentication
+boundary around every registered API handler. The node rejects configurations with more than one
+handler wrapper or conflicting definitions for the same header.
+
+The bundled clear-text transports bind only to loopback by default and reject non-loopback bind
+addresses. Development environments can explicitly opt into remote clear-text listeners with
+`http.allow_insecure_remote: true` and `transport.allow_insecure_remote: true`. Production nodes
+should select secure HTTP and native transport implementations instead.
+
 ## Contributing an API
 
 A feature plugin implements `RestHandlerPlugin`, returns its handlers from `getRestHandlers()`,
