@@ -136,6 +136,7 @@ log4jjul = { group = "org.apache.logging.log4j", name = "log4j-jul", version.ref
 log4jcore = { group = "org.apache.logging.log4j", name = "log4j-core", version.ref = "log4j" }
 log4jslf4jimpl = { group = "org.apache.logging.log4j", name = "log4j-slf4j-impl", version.ref = "log4j" }
 lucene-core = { group = "org.apache.lucene", name = "lucene-core", version.ref = "lucene" }
+lucene-codecs = { group = "org.apache.lucene", name = "lucene-codecs", version.ref = "lucene" }
 lucene-test-framework = { group = "org.apache.lucene", name = "lucene-test-framework", version.ref = "lucene" }
 lucene-analysis-common = { group = "org.apache.lucene", name = "lucene-analysis-common", version.ref = "lucene" }
 lucene-backward-codecs = { group = "org.apache.lucene", name = "lucene-backward-codecs", version.ref = "lucene" }

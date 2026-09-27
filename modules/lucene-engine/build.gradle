@@ -1,0 +1,29 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The OpenSearch Contributors require contributions made to
+ * this file be licensed under the Apache-2.0 license or a
+ * compatible open source license.
+ */
+
+opensearchplugin {
+    description = 'lucene-engine provider infrastructure'
+    classname = 'org.opensearch.engine.lucene.LuceneEnginePlugin'
+    extendedPlugins = ['engine']
+}
+
+repositories {
+    mavenLocal()
+    maven { url = "https://ci.opensearch.org/ci/dbc/snapshots/maven/" }
+    mavenCentral()
+}
+
+testingConventions.enabled = false
+
+dependencies {
+    compileOnly project(':libs:engine-api')
+    compileOnly libs.lucene.core
+    testImplementation project(':modules:engine')
+    testImplementation libs.bundles.unit.test
+    testRuntimeOnly libs.lucene.codecs
+}

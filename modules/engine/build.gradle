@@ -1,0 +1,25 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The OpenSearch Contributors require contributions made to
+ * this file be licensed under the Apache-2.0 license or a
+ * compatible open source license.
+ */
+
+opensearchplugin {
+    description = 'engine provider infrastructure'
+    classname = 'org.opensearch.engine.EnginePlugin'
+}
+
+repositories {
+    mavenLocal()
+    maven { url = "https://ci.opensearch.org/ci/dbc/snapshots/maven/" }
+    mavenCentral()
+}
+
+testingConventions.enabled = false
+
+dependencies {
+    api project(':libs:engine-api')
+    testImplementation libs.bundles.unit.test
+}
