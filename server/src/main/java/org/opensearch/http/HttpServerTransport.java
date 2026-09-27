@@ -57,6 +57,8 @@ public interface HttpServerTransport extends LifecycleComponent, ReportingServic
 
     /**
      * Dispatches HTTP requests.
+     * Implementations own the request after dispatch and must release it when it is no longer needed.
+     * Every request must result in a response or a closed channel.
      */
     interface Dispatcher {
         /**
@@ -84,9 +86,17 @@ public interface HttpServerTransport extends LifecycleComponent, ReportingServic
 
     Dispatcher NO_OP_DISPATCHER = new Dispatcher() {
         @Override
-        public void dispatchRequest(HttpRequest request, HttpChannel channel, ThreadContext threadContext) {}
+        public void dispatchRequest(HttpRequest request, HttpChannel channel, ThreadContext threadContext) {
+            try {
+                request.release();
+            } finally {
+                channel.close();
+            }
+        }
 
         @Override
-        public void dispatchBadRequest(HttpRequest request, HttpChannel channel, ThreadContext threadContext, Throwable cause) {}
+        public void dispatchBadRequest(HttpRequest request, HttpChannel channel, ThreadContext threadContext, Throwable cause) {
+            dispatchRequest(request, channel, threadContext);
+        }
     };
 }

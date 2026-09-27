@@ -20,5 +20,6 @@ repositories {
 testingConventions.enabled = false
 
 dependencies {
+    testImplementation libs.bundles.unit.test
     api project('spi')
 }

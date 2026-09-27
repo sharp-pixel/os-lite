@@ -102,6 +102,11 @@ arrow                 = "18.1.0"
 flatbuffers           = "2.0.0"
 
 [libraries]
+bytebuddy = { group = "net.bytebuddy", name = "byte-buddy", version.ref = "bytebuddy" }
+bytebuddy-agent = { group = "net.bytebuddy", name = "byte-buddy-agent", version.ref = "bytebuddy" }
+mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
+objenesis = { group = "org.objenesis", name = "objenesis", version.ref = "objenesis" }
+randomizedrunner = { group = "com.carrotsearch.randomizedtesting", name = "randomizedtesting-runner", version.ref = "randomizedrunner" }
 antlr4-runtime = { group = "org.antlr", name = "antlr4-runtime", version.ref = "antlr4" }
 asm-analysis = { group = "org.ow2.asm", name = "asm-analysis", version.ref = "asm" }
 asm-commons = { group = "org.ow2.asm", name = "asm-commons", version.ref = "asm" }
@@ -115,6 +120,7 @@ bouncycastle-pg = { group = "org.bouncycastle", name = "bcpg-fips", version.ref 
 bouncycastle-util = { group = "org.bouncycastle", name = "bcutil-fips", version.ref = "bouncycastle_util"}
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 hamcrest = { group = "org.hamcrest", name = "hamcrest", version.ref = "hamcrest" }
+httpcore5 = { group = "org.apache.httpcomponents.core5", name = "httpcore5", version.ref = "httpcore5" }
 hdrhistogram = { group = "org.hdrhistogram", name = "HdrHistogram", version.ref = "hdrhistogram" }
 jackson-annotation = { group = "com.fasterxml.jackson.core", name = "jackson-annotations", version.ref = "jackson_annotations" }
 jackson-databind = { group = "com.fasterxml.jackson.core", name = "jackson-databind", version.ref = "jackson_databind" }
@@ -130,6 +136,7 @@ log4jjul = { group = "org.apache.logging.log4j", name = "log4j-jul", version.ref
 log4jcore = { group = "org.apache.logging.log4j", name = "log4j-core", version.ref = "log4j" }
 log4jslf4jimpl = { group = "org.apache.logging.log4j", name = "log4j-slf4j-impl", version.ref = "log4j" }
 lucene-core = { group = "org.apache.lucene", name = "lucene-core", version.ref = "lucene" }
+lucene-test-framework = { group = "org.apache.lucene", name = "lucene-test-framework", version.ref = "lucene" }
 lucene-analysis-common = { group = "org.apache.lucene", name = "lucene-analysis-common", version.ref = "lucene" }
 lucene-backward-codecs = { group = "org.apache.lucene", name = "lucene-backward-codecs", version.ref = "lucene" }
 lucene-grouping = { group = "org.apache.lucene", name = "lucene-grouping", version.ref = "lucene" }
@@ -172,6 +179,8 @@ spatial4j = { group = "org.locationtech.spatial4j", name = "spatial4j", version.
 tdigest = { group = "com.tdunning", name = "t-digest", version.ref = "tdigest" }
 
 [bundles]
+# Includes the APIs referenced by the shared forbidden-test signatures.
+unit-test = ["junit", "hamcrest", "randomizedrunner", "lucene-test-framework", "httpcore5", "mockito-core", "bytebuddy", "bytebuddy-agent", "objenesis"]
 asm = [
     "asm-analysis",
     "asm-commons",

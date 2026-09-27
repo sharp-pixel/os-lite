@@ -11,6 +11,7 @@ repositories {
 }
 
 dependencies {
+    testImplementation libs.bundles.unit.test
     api "org.opensearch:opensearch-agent-bootstrap:${project.version}"
     api "org.opensearch:opensearch-agent-policy:${project.version}"
     api "org.opensearch:opensearch-cli:${project.version}"

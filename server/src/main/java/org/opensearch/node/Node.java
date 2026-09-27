@@ -215,12 +215,15 @@ public class Node implements Closeable {
                 initialEnvironment.pluginsDir(),
                 classpathPlugins
             );
+            resourcesToClose.addAll(pluginsService.filterPlugins(Plugin.class));
             final Settings settings = pluginsService.updatedSettings();
             this.environment = new Environment(settings, initialEnvironment.configDir(), Node.NODE_LOCAL_STORAGE_SETTING.get(settings));
 
             final List<ExecutorBuilder<?>> executorBuilders = pluginsService.getExecutorBuilders(settings);
             runnableTaskListener = new AtomicReference<>();
             final ThreadPool threadPool = new ThreadPool(settings, runnableTaskListener, executorBuilders.toArray(new ExecutorBuilder[0]));
+            // Keep the pool alive until all other resources have been closed on construction failure.
+            resourcesToClose.add(0, threadPool::shutdownNow);
             String nodeId = generateNodeId(settings);
             localNodeFactory = new LocalNodeFactory(settings, nodeId);
             final Set<SettingUpgrader<?>> settingsUpgraders = pluginsService.filterPlugins(Plugin.class)
@@ -260,13 +263,22 @@ public class Node implements Closeable {
                     .collect(toList())
             );
 
-            Collection<Object> pluginComponents = pluginsService.filterPlugins(Plugin.class)
-                .stream()
-                .flatMap(
-                    p -> p.createComponents(new PluginResources(xContentRegistry, namedWriteableRegistry, environment, threadPool, client))
-                        .stream()
-                )
-                .toList();
+            List<LifecycleComponent> pluginLifecycleComponents = new ArrayList<>();
+            PluginResources pluginResources = new PluginResources(
+                xContentRegistry,
+                namedWriteableRegistry,
+                environment,
+                threadPool,
+                client
+            );
+            for (Plugin plugin : pluginsService.filterPlugins(Plugin.class)) {
+                for (Object component : plugin.createComponents(pluginResources)) {
+                    if (component instanceof LifecycleComponent lifecycleComponent) {
+                        pluginLifecycleComponents.add(lifecycleComponent);
+                        resourcesToClose.add(lifecycleComponent);
+                    }
+                }
+            }
             ModulesBuilder modules = new ModulesBuilder();
             // plugin modules must be added here, before others or we can get crazy injection errors...
             for (Module pluginModule : pluginsService.createGuiceModules()) {
@@ -311,8 +323,12 @@ public class Node implements Closeable {
                 secureSettingsFactories
             );
             final Transport transport = networkModule.getTransportSupplier().get();
+            resourcesToClose.add(transport);
             final Supplier<Transport> streamTransportSupplier = networkModule.getStreamTransportSupplier();
             final Transport streamTransport = (streamTransportSupplier != null ? streamTransportSupplier.get() : null);
+            if (streamTransport != null && streamTransport != transport) {
+                resourcesToClose.add(streamTransport);
+            }
             Set<String> taskHeaders = Stream.concat(
                 pluginsService.filterPlugins(ActionPlugin.class).stream().flatMap(p -> p.getTaskHeaders().stream()),
                 Stream.of(Task.X_OPAQUE_ID)
@@ -328,7 +344,11 @@ public class Node implements Closeable {
                 taskHeaders,
                 tracer
             );
+            // TransportService now owns the primary transport.
+            resourcesToClose.remove(transport);
+            resourcesToClose.add(transportService);
             final HttpServerTransport httpServerTransport = newHttpTransport(networkModule);
+            resourcesToClose.add(httpServerTransport);
             modules.add(b -> {
                 b.bind(Node.class).toInstance(this);
                 b.bind(NamedXContentRegistry.class).toInstance(xContentRegistry);
@@ -349,22 +369,23 @@ public class Node implements Closeable {
             });
 
             injector = modules.createInjector();
-            List<LifecycleComponent> pluginLifecycleComponents = pluginComponents.stream()
-                .filter(p -> p instanceof LifecycleComponent)
-                .map(p -> (LifecycleComponent) p)
-                .collect(Collectors.toList());
-            pluginLifecycleComponents.addAll(pluginsService.getGuiceServiceClasses().stream().map(injector::getInstance).toList());
-            resourcesToClose.addAll(pluginLifecycleComponents);
+            for (Class<? extends LifecycleComponent> serviceClass : pluginsService.getGuiceServiceClasses()) {
+                LifecycleComponent service = injector.getInstance(serviceClass);
+                pluginLifecycleComponents.add(service);
+                resourcesToClose.add(service);
+            }
             this.pluginLifecycleComponents = Collections.unmodifiableList(pluginLifecycleComponents);
             ActionModule.DynamicActionRegistry dynamicActionRegistry = actionModule.getDynamicActionRegistry();
             dynamicActionRegistry.registerUnmodifiableActionMap(injector.getInstance(new Key<>() {
             }));
             client.initialize(dynamicActionRegistry, () -> nodeId, namedWriteableRegistry);
             logger.info("initialized");
+            success = true;
         } catch (Exception ex) {
             throw new OpenSearchException("failed to bind service", ex);
         } finally {
             if (!success) {
+                Collections.reverse(resourcesToClose);
                 IOUtils.closeWhileHandlingException(resourcesToClose);
             }
         }
@@ -483,6 +504,7 @@ public class Node implements Closeable {
             toClose.add(plugin);
         }
         toClose.addAll(pluginsService.filterPlugins(Plugin.class));
+        toClose.add(injector.getInstance(CircuitBreakerService.class));
         toClose.add(() -> stopWatch.stop().start("thread_pool"));
         toClose.add(() -> injector.getInstance(ThreadPool.class).shutdown());
         toClose.add(stopWatch::stop);

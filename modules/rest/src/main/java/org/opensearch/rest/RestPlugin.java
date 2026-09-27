@@ -21,6 +21,7 @@ import org.opensearch.plugins.Plugin;
 import org.opensearch.plugins.PluginResources;
 import org.opensearch.rest.spi.RestHandler;
 import org.opensearch.rest.spi.RestHandlerPlugin;
+import org.opensearch.tasks.Task;
 import org.opensearch.telemetry.tracing.Tracer;
 
 import java.util.ArrayList;
@@ -29,6 +30,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 
 /**
@@ -55,7 +57,7 @@ public class RestPlugin extends Plugin implements NetworkPlugin, ExtensiblePlugi
         Tracer tracer
     ) {
         RestController restController = new RestController(
-            Collections.emptySet(),
+            Set.of(new RestHeaderDefinition(Task.X_OPAQUE_ID, false)),
             UnaryOperator.identity(),
             pluginResources.nodeClient(),
             circuitBreakerService,

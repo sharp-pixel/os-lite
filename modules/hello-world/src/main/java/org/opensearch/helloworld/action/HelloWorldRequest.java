@@ -20,7 +20,7 @@ public class HelloWorldRequest extends ActionRequest {
     }
 
     public HelloWorldRequest(StreamInput in) throws IOException {
-
+        super(in);
     }
 
     @Override

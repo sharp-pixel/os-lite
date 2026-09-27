@@ -21,5 +21,10 @@ repositories {
 testingConventions.enabled = false
 
 dependencies {
+    testImplementation libs.junit
+    testImplementation libs.hamcrest
+    testImplementation libs.randomizedrunner
+    testImplementation libs.lucene.test.framework
+    testRuntimeOnly libs.httpcore5
     compileOnly project(':modules:rest:spi')
 }
