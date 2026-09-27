@@ -42,8 +42,8 @@ import com.sun.jna.ptr.PointerByReference;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.Constants;
 import org.opensearch.common.util.io.IOUtils;
+import org.opensearch.core.util.Platform;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -130,7 +130,7 @@ final class SystemCallFilter {
 
     static {
         LinuxLibrary lib = null;
-        if (Constants.LINUX) {
+        if (Platform.LINUX) {
             try {
                 lib = (LinuxLibrary) Native.loadLibrary("c", LinuxLibrary.class);
             } catch (UnsatisfiedLinkError e) {
@@ -279,10 +279,10 @@ final class SystemCallFilter {
     private static int linuxImpl() {
         // first be defensive: we can give nice errors this way, at the very least.
         // also, some of these security features get backported to old versions, checking kernel version here is a big no-no!
-        final Arch arch = ARCHITECTURES.get(Constants.OS_ARCH);
-        boolean supported = Constants.LINUX && arch != null;
+        final Arch arch = ARCHITECTURES.get(Platform.OS_ARCH);
+        boolean supported = Platform.LINUX && arch != null;
         if (supported == false) {
-            throw new UnsupportedOperationException("seccomp unavailable: '" + Constants.OS_ARCH + "' architecture unsupported");
+            throw new UnsupportedOperationException("seccomp unavailable: '" + Platform.OS_ARCH + "' architecture unsupported");
         }
 
         // we couldn't link methods, could be some really ancient kernel (e.g. < 2.1.57) or some bug
@@ -483,7 +483,7 @@ final class SystemCallFilter {
 
     static {
         MacLibrary lib = null;
-        if (Constants.MAC_OS_X) {
+        if (Platform.MAC_OS_X) {
             try {
                 lib = (MacLibrary) Native.loadLibrary("c", MacLibrary.class);
             } catch (UnsatisfiedLinkError e) {
@@ -501,7 +501,7 @@ final class SystemCallFilter {
     /** try to install our custom rule profile into sandbox_init() to block execution */
     private static void macImpl(Path tmpFile) throws IOException {
         // first be defensive: we can give nice errors this way, at the very least.
-        boolean supported = Constants.MAC_OS_X;
+        boolean supported = Platform.MAC_OS_X;
         if (supported == false) {
             throw new IllegalStateException("bug: should not be trying to initialize seatbelt for an unsupported OS");
         }
@@ -552,7 +552,7 @@ final class SystemCallFilter {
 
     static {
         SolarisLibrary lib = null;
-        if (Constants.SUN_OS) {
+        if (Platform.SUN_OS) {
             try {
                 lib = (SolarisLibrary) Native.loadLibrary("c", SolarisLibrary.class);
             } catch (UnsatisfiedLinkError e) {
@@ -571,7 +571,7 @@ final class SystemCallFilter {
 
     static void solarisImpl() {
         // first be defensive: we can give nice errors this way, at the very least.
-        boolean supported = Constants.SUN_OS;
+        boolean supported = Platform.SUN_OS;
         if (supported == false) {
             throw new IllegalStateException("bug: should not be trying to initialize priv_set for an unsupported OS");
         }
@@ -591,15 +591,15 @@ final class SystemCallFilter {
 
     // BSD implementation via setrlimit(2)
 
-    // TODO: add OpenBSD to Lucene Constants
+    // TODO: add OpenBSD to Lucene Platform
     // TODO: JNA doesn't have netbsd support, but this mechanism should work there too.
-    static final boolean OPENBSD = Constants.OS_NAME.startsWith("OpenBSD");
+    static final boolean OPENBSD = Platform.OS_NAME.startsWith("OpenBSD");
 
     // not a standard limit, means something different on linux, etc!
     static final int RLIMIT_NPROC = 7;
 
     static void bsdImpl() {
-        boolean supported = Constants.FREE_BSD || OPENBSD || Constants.MAC_OS_X;
+        boolean supported = Platform.FREE_BSD || OPENBSD || Platform.MAC_OS_X;
         if (supported == false) {
             throw new IllegalStateException("bug: should not be trying to initialize RLIMIT_NPROC for an unsupported OS");
         }
@@ -617,7 +617,7 @@ final class SystemCallFilter {
     // windows impl via job ActiveProcessLimit
 
     static void windowsImpl() {
-        if (!Constants.WINDOWS) {
+        if (!Platform.WINDOWS) {
             throw new IllegalStateException("bug: should not be trying to initialize ActiveProcessLimit for an unsupported OS");
         }
 
@@ -663,24 +663,24 @@ final class SystemCallFilter {
      * @return 0 if we can do this for application threads, 1 for the entire process
      */
     static int init(Path tmpFile) throws Exception {
-        if (Constants.LINUX) {
+        if (Platform.LINUX) {
             return linuxImpl();
-        } else if (Constants.MAC_OS_X) {
+        } else if (Platform.MAC_OS_X) {
             // try to enable both mechanisms if possible
             bsdImpl();
             macImpl(tmpFile);
             return 1;
-        } else if (Constants.SUN_OS) {
+        } else if (Platform.SUN_OS) {
             solarisImpl();
             return 1;
-        } else if (Constants.FREE_BSD || OPENBSD) {
+        } else if (Platform.FREE_BSD || OPENBSD) {
             bsdImpl();
             return 1;
-        } else if (Constants.WINDOWS) {
+        } else if (Platform.WINDOWS) {
             windowsImpl();
             return 1;
         } else {
-            throw new UnsupportedOperationException("syscall filtering not supported for OS: '" + Constants.OS_NAME + "'");
+            throw new UnsupportedOperationException("syscall filtering not supported for OS: '" + Platform.OS_NAME + "'");
         }
     }
 }

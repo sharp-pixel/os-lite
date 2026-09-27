@@ -35,7 +35,7 @@ public abstract class IndexRequest extends ActionRequest {
 
     protected IndexRequest(StreamInput in) throws IOException {
         super(in);
-        if (in.readByte() != 1) throw new IOException("unsupported index action wire version");
+        if (in.readByte() != 2) throw new IOException("unsupported index action wire version");
         index = IndexWire.string(in, 128);
         try {
             IndexMetadata.validateName(index);
@@ -56,7 +56,7 @@ public abstract class IndexRequest extends ActionRequest {
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
-        out.writeByte((byte) 1);
+        out.writeByte((byte) 2);
         IndexWire.string(out, index);
     }
 
@@ -118,6 +118,32 @@ public abstract class IndexRequest extends ActionRequest {
             super.writeTo(out);
             IndexWire.string(out, engine);
             IndexWire.schema(out, schema);
+        }
+    }
+
+    public static final class Claim extends IndexRequest {
+        private final long expectedEpoch;
+
+        public Claim(String index, long expectedEpoch) {
+            super(index);
+            if (expectedEpoch < 1) throw new IllegalArgumentException("expected_epoch must be positive");
+            this.expectedEpoch = expectedEpoch;
+        }
+
+        public Claim(StreamInput in) throws IOException {
+            super(in);
+            expectedEpoch = in.readVLong();
+            if (expectedEpoch < 1) throw new IOException("expected_epoch must be positive");
+        }
+
+        public long expectedEpoch() {
+            return expectedEpoch;
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            super.writeTo(out);
+            out.writeVLong(expectedEpoch);
         }
     }
 
@@ -218,9 +244,20 @@ public abstract class IndexRequest extends ActionRequest {
     public static final class Search extends IndexRequest {
         private final SearchQuery query;
         private final int limit;
+        private final org.opensearch.engine.api.Checkpoint minimum;
+        private final int waitMillis;
 
         public Search(String index, SearchQuery query, int limit) {
+            this(index, query, limit, null, 0);
+        }
+
+        public Search(String index, SearchQuery query, int limit, org.opensearch.engine.api.Checkpoint minimum, int waitMillis) {
             super(index);
+            if (waitMillis < 0 || waitMillis > 30000 || (minimum == null && waitMillis != 0)) throw new IllegalArgumentException(
+                "invalid checkpoint wait"
+            );
+            this.minimum = minimum;
+            this.waitMillis = waitMillis;
             SearchQuery.estimatedBytes(query);
             if (limit < 1 || limit > 1000) throw new IllegalArgumentException("size must be 1 to 1000");
             this.query = query;
@@ -232,6 +269,17 @@ public abstract class IndexRequest extends ActionRequest {
             query = IndexWire.query(in);
             limit = IndexWire.count(in, 1000);
             if (limit == 0) throw new IOException("size must be positive");
+            minimum = in.readBoolean() ? IndexWire.checkpoint(in) : null;
+            waitMillis = IndexWire.count(in, 30000);
+            if (minimum == null && waitMillis != 0) throw new IOException("wait requires a minimum checkpoint");
+        }
+
+        public org.opensearch.engine.api.Checkpoint minimum() {
+            return minimum;
+        }
+
+        public int waitMillis() {
+            return waitMillis;
         }
 
         public SearchQuery query() {
@@ -247,6 +295,9 @@ public abstract class IndexRequest extends ActionRequest {
             super.writeTo(out);
             IndexWire.query(out, query);
             out.writeVInt(limit);
+            out.writeBoolean(minimum != null);
+            if (minimum != null) IndexWire.checkpoint(out, minimum);
+            out.writeVInt(waitMillis);
         }
     }
 }

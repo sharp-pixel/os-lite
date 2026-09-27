@@ -34,7 +34,6 @@ package org.opensearch.node;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.Constants;
 import org.opensearch.Build;
 import org.opensearch.OpenSearchException;
 import org.opensearch.action.ActionModule;
@@ -70,6 +69,7 @@ import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
 import org.opensearch.core.common.transport.BoundTransportAddress;
 import org.opensearch.core.indices.breaker.CircuitBreakerService;
 import org.opensearch.core.indices.breaker.NoneCircuitBreakerService;
+import org.opensearch.core.util.Platform;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.env.Environment;
 import org.opensearch.http.HttpServerTransport;
@@ -183,11 +183,11 @@ public class Node implements Closeable {
                 Build.CURRENT.type().displayName(),
                 Build.CURRENT.hash(),
                 Build.CURRENT.date(),
-                Constants.OS_NAME,
-                Constants.OS_VERSION,
-                Constants.OS_ARCH,
-                Constants.JVM_VENDOR,
-                Constants.JVM_NAME,
+                Platform.OS_NAME,
+                Platform.OS_VERSION,
+                Platform.OS_ARCH,
+                Platform.JVM_VENDOR,
+                Platform.JVM_NAME,
                 System.getProperty("java.version"),
                 Runtime.version().toString()
             );

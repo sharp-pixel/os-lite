@@ -32,9 +32,9 @@
 
 package org.opensearch.env;
 
-import org.apache.lucene.util.Constants;
 import org.opensearch.common.SuppressForbidden;
 import org.opensearch.common.io.PathUtils;
+import org.opensearch.core.util.Platform;
 
 import java.io.IOException;
 import java.nio.file.FileStore;
@@ -63,7 +63,7 @@ class OpenSearchFileStore extends FileStore {
     // public+forbidden api!
     OpenSearchFileStore(final FileStore in) {
         this.in = in;
-        if (Constants.LINUX) {
+        if (Platform.LINUX) {
             try {
                 final List<String> lines = Files.readAllLines(PathUtils.get("/proc/self/mountinfo"));
                 for (final String line : lines) {

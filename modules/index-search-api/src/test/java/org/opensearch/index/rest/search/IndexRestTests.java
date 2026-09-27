@@ -183,6 +183,16 @@ public class IndexRestTests extends RandomizedTest {
         }
     }
 
+    public void testCheckpointAndWriterClaimOptionsAreValidated() throws Exception {
+        try (Fixture fixture = fixture(Settings.EMPTY)) {
+            fixture.create();
+            fixture.request(HttpRequest.Method.POST, "/books/_search", "{\"wait_timeout_millis\":10}", RestStatus.BAD_REQUEST);
+            fixture.request(HttpRequest.Method.POST, "/books/_search", "{\"minimum_checkpoint\":{}}", RestStatus.BAD_REQUEST);
+            fixture.request(HttpRequest.Method.POST, "/books/_writer", "{\"expected_epoch\":0}", RestStatus.BAD_REQUEST);
+            fixture.request(HttpRequest.Method.POST, "/books/_writer", "{\"expected_epoch\":1}", RestStatus.BAD_REQUEST);
+        }
+    }
+
     public void testBodyAndNestingLimits() throws Exception {
         try (Fixture fixture = fixture(Settings.EMPTY)) {
             fixture.request(HttpRequest.Method.POST, "/books/_search", " ".repeat(65537), RestStatus.BAD_REQUEST);
@@ -232,6 +242,8 @@ public class IndexRestTests extends RandomizedTest {
             when(transport.getTaskManager()).thenReturn(mock(TaskManager.class));
             ActionFilters filters = new ActionFilters(Set.of());
             Map<String, TransportAction<?, ?>> actions = Map.of(
+                IndexActions.CLAIM.name(),
+                new IndexTransportActions.Claim(transport, filters, indices),
                 IndexActions.CREATE.name(),
                 new IndexTransportActions.Create(transport, filters, indices),
                 IndexActions.DESCRIBE.name(),

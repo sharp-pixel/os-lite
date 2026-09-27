@@ -30,8 +30,8 @@
 
 package org.opensearch.plugins;
 
-import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util.SuppressForbidden;
+import org.opensearch.common.SuppressForbidden;
+import org.opensearch.common.util.io.IOUtils;
 
 import java.io.BufferedReader;
 import java.io.IOException;

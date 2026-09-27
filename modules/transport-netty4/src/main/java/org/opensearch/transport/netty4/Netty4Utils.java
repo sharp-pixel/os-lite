@@ -32,9 +32,9 @@
 
 package org.opensearch.transport.netty4;
 
-import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.BytesRefIterator;
 import org.opensearch.common.Booleans;
+import org.opensearch.core.common.bytes.ByteSlice;
+import org.opensearch.core.common.bytes.ByteSliceIterator;
 import org.opensearch.core.common.bytes.BytesArray;
 import org.opensearch.core.common.bytes.BytesReference;
 
@@ -96,11 +96,11 @@ public class Netty4Utils {
         if (reference.length() == 0) {
             return Unpooled.EMPTY_BUFFER;
         }
-        final BytesRefIterator iterator = reference.iterator();
+        final ByteSliceIterator iterator = reference.iterator();
         // usually we have one, two, or three components from the header, the message, and a buffer
         final List<ByteBuf> buffers = new ArrayList<>(3);
         try {
-            BytesRef slice;
+            ByteSlice slice;
             while ((slice = iterator.next()) != null) {
                 buffers.add(Unpooled.wrappedBuffer(slice.bytes, slice.offset, slice.length));
             }

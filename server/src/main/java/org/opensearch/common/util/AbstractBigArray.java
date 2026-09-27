@@ -32,10 +32,10 @@
 
 package org.opensearch.common.util;
 
-import org.apache.lucene.util.ArrayUtil;
-import org.apache.lucene.util.RamUsageEstimator;
 import org.opensearch.common.lease.Releasables;
 import org.opensearch.common.recycler.Recycler;
+import org.opensearch.core.util.ArraySizing;
+import org.opensearch.core.util.MemorySize;
 
 import java.lang.reflect.Array;
 import java.util.Arrays;
@@ -115,7 +115,7 @@ abstract class AbstractBigArray extends AbstractArray {
 
     private static <T> T[] grow(T[] array, int minSize) {
         if (array.length < minSize) {
-            final int newLen = ArrayUtil.oversize(minSize, RamUsageEstimator.NUM_BYTES_OBJECT_REF);
+            final int newLen = ArraySizing.oversize(minSize, MemorySize.NUM_BYTES_OBJECT_REF);
             array = Arrays.copyOf(array, newLen);
         }
         return array;

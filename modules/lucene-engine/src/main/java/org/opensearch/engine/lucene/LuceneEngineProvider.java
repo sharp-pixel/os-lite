@@ -15,8 +15,11 @@ import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexCommit;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.KeepOnlyLastCommitDeletionPolicy;
+import org.apache.lucene.index.SnapshotDeletionPolicy;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.ScoreDoc;
@@ -26,6 +29,8 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TotalHits;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.BytesRef;
 import org.opensearch.engine.api.Checkpoint;
 import org.opensearch.engine.api.EngineDescriptor;
@@ -41,6 +46,8 @@ import org.opensearch.engine.api.SearchResult;
 import org.opensearch.engine.api.ShardReader;
 import org.opensearch.engine.api.ShardSpec;
 import org.opensearch.engine.api.ShardWriter;
+import org.opensearch.engine.api.SnapshotManifest;
+import org.opensearch.engine.api.SnapshotSource;
 import org.opensearch.engine.api.WriteResult;
 
 import java.io.IOException;
@@ -76,6 +83,7 @@ public final class LuceneEngineProvider implements EngineProvider {
     }
 
     LuceneEngineProvider(DirectoryFactory directories) {
+        LuceneRuntime.initialize();
         this.directories = directories;
     }
 
@@ -89,6 +97,11 @@ public final class LuceneEngineProvider implements EngineProvider {
             EngineDescriptor.CURRENT_API_VERSION,
             Set.of(Schema.FieldType.KEYWORD, Schema.FieldType.TEXT)
         );
+    }
+
+    @Override
+    public Set<String> snapshotFormats() {
+        return Set.of("lucene-1");
     }
 
     @Override
@@ -148,6 +161,9 @@ public final class LuceneEngineProvider implements EngineProvider {
         private final Directory directory;
         private final StandardAnalyzer analyzer;
         private final IndexWriter writer;
+        private final SnapshotDeletionPolicy snapshots = new SnapshotDeletionPolicy(new KeepOnlyLastCommitDeletionPolicy());
+        private int leases;
+        private boolean resourcesClosed;
         private Checkpoint durable;
         private boolean failed;
         private boolean closed;
@@ -167,7 +183,10 @@ public final class LuceneEngineProvider implements EngineProvider {
                         }
                     }
                 }
-                openedWriter = new IndexWriter(openedDirectory, new IndexWriterConfig(openedAnalyzer).setRAMBufferSizeMB(16));
+                openedWriter = new IndexWriter(
+                    openedDirectory,
+                    new IndexWriterConfig(openedAnalyzer).setRAMBufferSizeMB(16).setIndexDeletionPolicy(snapshots)
+                );
                 Map<String, String> persisted = new HashMap<>();
                 openedWriter.getLiveCommitData().forEach(entry -> persisted.put(entry.getKey(), entry.getValue()));
                 if (DirectoryReader.indexExists(openedDirectory)) {
@@ -267,9 +286,177 @@ public final class LuceneEngineProvider implements EngineProvider {
         }
 
         @Override
+        public synchronized SnapshotSource snapshot(OperationContext context) {
+            ensureReady();
+            context.check();
+            if (leases >= 16) throw new EngineException(RESOURCE_LIMIT, "too many snapshot leases");
+            IndexCommit commit = null;
+            try {
+                commit = snapshots.snapshot();
+                if (commit.getFileNames().size() > SnapshotManifest.MAX_FILES) throw new EngineException(
+                    RESOURCE_LIMIT,
+                    "too many snapshot files"
+                );
+                List<SnapshotManifest.File> files = new ArrayList<>();
+                long total = 0;
+                byte[] buffer = new byte[65536];
+                for (String name : new java.util.TreeSet<>(commit.getFileNames())) {
+                    context.check();
+                    long length = directory.fileLength(name);
+                    if (length > SnapshotManifest.MAX_BYTES - total) throw new EngineException(
+                        RESOURCE_LIMIT,
+                        "snapshot exceeds byte limit"
+                    );
+                    total += length;
+                    java.security.MessageDigest digest = sha256();
+                    try (IndexInput input = directory.openInput(name, IOContext.READONCE)) {
+                        long remaining = length;
+                        while (remaining > 0) {
+                            context.check();
+                            int count = (int) Math.min(remaining, buffer.length);
+                            input.readBytes(buffer, 0, count);
+                            digest.update(buffer, 0, count);
+                            remaining -= count;
+                        }
+                    }
+                    files.add(new SnapshotManifest.File(name, length, java.util.HexFormat.of().formatHex(digest.digest())));
+                }
+                SnapshotManifest manifest = new SnapshotManifest(
+                    "lucene",
+                    "lucene-1",
+                    spec.schema(),
+                    readCheckpoint(spec, commit.getUserData()),
+                    files
+                );
+                leases++;
+                return new Lease(commit, manifest);
+            } catch (Exception e) {
+                if (commit != null) {
+                    try {
+                        snapshots.release(commit);
+                    } catch (IOException suppressed) {
+                        e.addSuppressed(suppressed);
+                    }
+                }
+                if (e instanceof EngineException failure) throw failure;
+                throw io("cannot export committed snapshot", e);
+            }
+        }
+
+        private static java.security.MessageDigest sha256() {
+            try {
+                return java.security.MessageDigest.getInstance("SHA-256");
+            } catch (java.security.NoSuchAlgorithmException e) {
+                throw new IllegalStateException("SHA-256 unavailable", e);
+            }
+        }
+
+        private final class Lease implements SnapshotSource {
+            private final IndexCommit commit;
+            private final SnapshotManifest manifest;
+            private final Set<IndexInput> inputs = new java.util.HashSet<>();
+            private boolean released;
+
+            Lease(IndexCommit commit, SnapshotManifest manifest) {
+                this.commit = commit;
+                this.manifest = manifest;
+            }
+
+            @Override
+            public synchronized SnapshotManifest manifest() {
+                if (released) throw new EngineException(CLOSED, "snapshot lease is closed");
+                return manifest;
+            }
+
+            @Override
+            public synchronized java.io.InputStream open(String name) throws IOException {
+                if (released) throw new IOException("snapshot lease is closed");
+                if (manifest.files().stream().noneMatch(file -> file.name().equals(name))) throw new IOException(
+                    "file is outside snapshot"
+                );
+                IndexInput input = directory.openInput(name, IOContext.READONCE);
+                inputs.add(input);
+                return new java.io.InputStream() {
+                    private boolean streamClosed;
+
+                    @Override
+                    public int read() throws IOException {
+                        synchronized (Lease.this) {
+                            if (streamClosed || released) throw new IOException("snapshot stream is closed");
+                            return input.getFilePointer() == input.length() ? -1 : input.readByte() & 255;
+                        }
+                    }
+
+                    @Override
+                    public int read(byte[] bytes, int offset, int length) throws IOException {
+                        java.util.Objects.checkFromIndexSize(offset, length, bytes.length);
+                        synchronized (Lease.this) {
+                            if (streamClosed || released) throw new IOException("snapshot stream is closed");
+                            if (length == 0) return 0;
+                            int count = (int) Math.min(length, input.length() - input.getFilePointer());
+                            if (count == 0) return -1;
+                            input.readBytes(bytes, offset, count);
+                            return count;
+                        }
+                    }
+
+                    @Override
+                    public void close() throws IOException {
+                        synchronized (Lease.this) {
+                            if (streamClosed) return;
+                            streamClosed = true;
+                            if (inputs.remove(input)) input.close();
+                        }
+                    }
+                };
+            }
+
+            @Override
+            public synchronized void close() {
+                if (released) return;
+                released = true;
+                RuntimeException failure = null;
+                for (IndexInput input : inputs) {
+                    try {
+                        input.close();
+                    } catch (IOException e) {
+                        if (failure == null) failure = io("cannot close snapshot stream", e);
+                        else failure.addSuppressed(e);
+                    }
+                }
+                inputs.clear();
+                synchronized (Writer.this) {
+                    try {
+                        snapshots.release(commit);
+                    } catch (IOException e) {
+                        if (failure == null) failure = io("cannot release snapshot", e);
+                        else failure.addSuppressed(e);
+                    } finally {
+                        leases--;
+                        if (closed && leases == 0) {
+                            try {
+                                closeResources();
+                            } catch (RuntimeException e) {
+                                if (failure == null) failure = e;
+                                else failure.addSuppressed(e);
+                            }
+                        }
+                    }
+                }
+                if (failure != null) throw failure;
+            }
+        }
+
+        @Override
         public synchronized void close() {
             if (closed) return;
             closed = true;
+            if (leases == 0) closeResources();
+        }
+
+        private void closeResources() {
+            if (resourcesClosed) return;
+            resourcesClosed = true;
             // Every acknowledged batch is committed already. Never commit an uncertain batch during cleanup.
             RuntimeException failure = null;
             try {

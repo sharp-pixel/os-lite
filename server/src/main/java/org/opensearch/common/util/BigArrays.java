@@ -32,9 +32,6 @@
 
 package org.opensearch.common.util;
 
-import org.apache.lucene.util.ArrayUtil;
-import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.RamUsageEstimator;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.lease.Releasable;
@@ -42,9 +39,12 @@ import org.opensearch.common.lease.Releasables;
 import org.opensearch.common.recycler.Recycler;
 import org.opensearch.core.common.breaker.CircuitBreaker;
 import org.opensearch.core.common.breaker.CircuitBreakingException;
+import org.opensearch.core.common.bytes.ByteSlice;
 import org.opensearch.core.common.util.BigArray;
 import org.opensearch.core.common.util.ByteArray;
 import org.opensearch.core.indices.breaker.CircuitBreakerService;
+import org.opensearch.core.util.ArraySizing;
+import org.opensearch.core.util.MemorySize;
 
 import java.util.Arrays;
 
@@ -65,7 +65,7 @@ public class BigArrays {
     }
 
     /** Return the next size to grow to that is &gt;= <code>minTargetSize</code>.
-     *  Inspired from {@link ArrayUtil#oversize(int, int)} and adapted to play nicely with paging. */
+     *  Inspired from {@link ArraySizing#oversize(int, int)} and adapted to play nicely with paging. */
     public static long overSize(long minTargetSize, int pageSize, int bytesPerElement) {
         if (minTargetSize < 0) {
             throw new IllegalArgumentException("minTargetSize must be >= 0");
@@ -79,7 +79,7 @@ public class BigArrays {
 
         long newSize;
         if (minTargetSize < pageSize) {
-            newSize = Math.min(ArrayUtil.oversize((int) minTargetSize, bytesPerElement), pageSize);
+            newSize = Math.min(ArraySizing.oversize((int) minTargetSize, bytesPerElement), pageSize);
         } else {
             final long pages = (minTargetSize + pageSize - 1) / pageSize; // ceil(minTargetSize/pageSize)
             newSize = pages * pageSize;
@@ -99,7 +99,7 @@ public class BigArrays {
      */
     private abstract static class AbstractArrayWrapper extends AbstractArray implements BigArray {
 
-        static final long SHALLOW_SIZE = RamUsageEstimator.shallowSizeOfInstance(ByteArrayWrapper.class);
+        static final long SHALLOW_SIZE = MemorySize.shallowSizeOfInstance(ByteArrayWrapper.class);
 
         private final Releasable releasable;
         private final long size;
@@ -138,7 +138,7 @@ public class BigArrays {
 
         @Override
         public long ramBytesUsed() {
-            return SHALLOW_SIZE + RamUsageEstimator.sizeOf(array);
+            return SHALLOW_SIZE + MemorySize.sizeOf(array);
         }
 
         @Override
@@ -156,7 +156,7 @@ public class BigArrays {
         }
 
         @Override
-        public boolean get(long index, int len, BytesRef ref) {
+        public boolean get(long index, int len, ByteSlice ref) {
             assert indexIsInt(index);
             ref.bytes = array;
             ref.offset = (int) index;
@@ -204,7 +204,7 @@ public class BigArrays {
 
         @Override
         public long ramBytesUsed() {
-            return SHALLOW_SIZE + RamUsageEstimator.sizeOf(array);
+            return SHALLOW_SIZE + MemorySize.sizeOf(array);
         }
 
         @Override
@@ -252,7 +252,7 @@ public class BigArrays {
 
         @Override
         public long ramBytesUsed() {
-            return SHALLOW_SIZE + RamUsageEstimator.sizeOf(array);
+            return SHALLOW_SIZE + MemorySize.sizeOf(array);
         }
 
         @Override
@@ -299,7 +299,7 @@ public class BigArrays {
 
         @Override
         public long ramBytesUsed() {
-            return SHALLOW_SIZE + RamUsageEstimator.sizeOf(array);
+            return SHALLOW_SIZE + MemorySize.sizeOf(array);
         }
 
         @Override
@@ -347,7 +347,7 @@ public class BigArrays {
 
         @Override
         public long ramBytesUsed() {
-            return SHALLOW_SIZE + RamUsageEstimator.sizeOf(array);
+            return SHALLOW_SIZE + MemorySize.sizeOf(array);
         }
 
         @Override
@@ -395,9 +395,7 @@ public class BigArrays {
 
         @Override
         public long ramBytesUsed() {
-            return SHALLOW_SIZE + RamUsageEstimator.alignObjectSize(
-                RamUsageEstimator.NUM_BYTES_ARRAY_HEADER + RamUsageEstimator.NUM_BYTES_OBJECT_REF * size()
-            );
+            return SHALLOW_SIZE + MemorySize.alignObjectSize(MemorySize.NUM_BYTES_ARRAY_HEADER + MemorySize.NUM_BYTES_OBJECT_REF * size());
         }
 
         @SuppressWarnings("unchecked")
@@ -880,7 +878,7 @@ public class BigArrays {
         if (minSize <= array.size()) {
             return array;
         }
-        final long newSize = overSize(minSize, PageCacheRecycler.OBJECT_PAGE_SIZE, RamUsageEstimator.NUM_BYTES_OBJECT_REF);
+        final long newSize = overSize(minSize, PageCacheRecycler.OBJECT_PAGE_SIZE, MemorySize.NUM_BYTES_OBJECT_REF);
         return resize(array, newSize);
     }
 }

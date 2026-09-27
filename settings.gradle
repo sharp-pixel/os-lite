@@ -27,6 +27,7 @@ List projects = [
   'distribution:tools:launchers',
   'distribution:tools:java-version-checker',
   'server',
+  'libs:core',
   'libs:engine-api',
   'libs:index-api',
   'test:logger-usage'

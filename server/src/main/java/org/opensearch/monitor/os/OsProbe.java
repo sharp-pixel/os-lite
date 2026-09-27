@@ -34,9 +34,9 @@ package org.opensearch.monitor.os;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.Constants;
 import org.opensearch.common.SuppressForbidden;
 import org.opensearch.common.io.PathUtils;
+import org.opensearch.core.util.Platform;
 import org.opensearch.monitor.Probes;
 
 import java.io.IOException;
@@ -193,9 +193,9 @@ public class OsProbe {
      * @return the available system load averages or {@code null}
      */
     final double[] getSystemLoadAverage() {
-        if (Constants.WINDOWS) {
+        if (Platform.WINDOWS) {
             return null;
-        } else if (Constants.LINUX) {
+        } else if (Platform.LINUX) {
             try {
                 final String procLoadAvg = readProcLoadavg();
                 assert procLoadAvg.matches("(\\d+\\.\\d+\\s+){3}\\d+/\\d+\\s+\\d+");
@@ -208,7 +208,7 @@ public class OsProbe {
                 return null;
             }
         } else {
-            assert Constants.MAC_OS_X;
+            assert Platform.MAC_OS_X;
             if (getSystemLoadAverage == null) {
                 return null;
             }
@@ -618,16 +618,16 @@ public class OsProbe {
             refreshInterval,
             Runtime.getRuntime().availableProcessors(),
             allocatedProcessors,
-            Constants.OS_NAME,
+            Platform.OS_NAME,
             getPrettyName(),
-            Constants.OS_ARCH,
-            Constants.OS_VERSION
+            Platform.OS_ARCH,
+            Platform.OS_VERSION
         );
     }
 
     private String getPrettyName() throws IOException {
         // TODO: return a prettier name on non-Linux OS
-        if (Constants.LINUX) {
+        if (Platform.LINUX) {
             /*
              * We read the lines from /etc/os-release (or /usr/lib/os-release) to extract the PRETTY_NAME. The format of this file is
              * newline-separated key-value pairs. The key and value are separated by an equals symbol (=). The value can unquoted, or
@@ -650,11 +650,11 @@ public class OsProbe {
                 assert matcher.groupCount() == 2 : trimmedPrettyNameLine;
                 return matcher.group(2);
             } else {
-                return Constants.OS_NAME;
+                return Platform.OS_NAME;
             }
 
         } else {
-            return Constants.OS_NAME;
+            return Platform.OS_NAME;
         }
     }
 
@@ -692,7 +692,7 @@ public class OsProbe {
         final OsStats.Cpu cpu = new OsStats.Cpu(getSystemCpuPercent(), getSystemLoadAverage());
         final OsStats.Mem mem = new OsStats.Mem(getTotalPhysicalMemorySize(), getFreePhysicalMemorySize());
         final OsStats.Swap swap = new OsStats.Swap(getTotalSwapSpaceSize(), getFreeSwapSpaceSize());
-        final OsStats.Cgroup cgroup = Constants.LINUX ? getCgroup() : null;
+        final OsStats.Cgroup cgroup = Platform.LINUX ? getCgroup() : null;
         return new OsStats(System.currentTimeMillis(), cpu, mem, swap, cgroup);
     }
 

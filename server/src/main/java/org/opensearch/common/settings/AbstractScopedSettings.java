@@ -35,7 +35,6 @@ package org.opensearch.common.settings;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
-import org.apache.lucene.util.CollectionUtil;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.regex.Regex;
@@ -581,7 +580,7 @@ public abstract class AbstractScopedSettings {
         Setting setting = getRaw(key);
         if (setting == null) {
             List<Tuple<Float, String>> scoredKeys = new ArrayList<>();
-            CollectionUtil.timSort(scoredKeys, (a, b) -> b.v1().compareTo(a.v1()));
+            scoredKeys.sort((a, b) -> b.v1().compareTo(a.v1()));
             String msgPrefix = "unknown setting";
             SecureSettings secureSettings = settings.getSecureSettings();
             if (secureSettings != null && settings.getSecureSettings().getSettingNames().contains(key)) {

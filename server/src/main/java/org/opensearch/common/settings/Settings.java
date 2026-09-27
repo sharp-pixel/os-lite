@@ -864,17 +864,6 @@ public final class Settings implements ToXContentFragment {
         }
 
         /**
-         * Sets an lucene version setting with the provided setting key and lucene version instance.
-         *
-         * @param key  The setting key
-         * @param luceneVersion The setting value
-         * @return The builder
-         */
-        public Builder put(String key, org.apache.lucene.util.Version luceneVersion) {
-            return put(key, luceneVersion.toString());
-        }
-
-        /**
          * Sets a setting with the provided setting key and value.
          *
          * @param key   The setting key

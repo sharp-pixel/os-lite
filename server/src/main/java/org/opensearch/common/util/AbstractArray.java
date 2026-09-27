@@ -32,7 +32,7 @@
 
 package org.opensearch.common.util;
 
-import org.apache.lucene.util.Accountable;
+import org.opensearch.core.common.util.Accountable;
 import org.opensearch.core.common.util.BigArray;
 
 import java.util.Collection;

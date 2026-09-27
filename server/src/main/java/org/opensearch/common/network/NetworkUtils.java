@@ -32,8 +32,8 @@
 
 package org.opensearch.common.network;
 
-import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.Constants;
+import org.opensearch.core.common.bytes.ByteSlice;
+import org.opensearch.core.util.Platform;
 
 import java.io.IOException;
 import java.net.Inet4Address;
@@ -132,7 +132,7 @@ public abstract class NetworkUtils {
             public int compare(InetAddress left, InetAddress right) {
                 int cmp = Integer.compare(sortKey(left, PREFER_V6), sortKey(right, PREFER_V6));
                 if (cmp == 0) {
-                    cmp = new BytesRef(left.getAddress()).compareTo(new BytesRef(right.getAddress()));
+                    cmp = new ByteSlice(left.getAddress()).compareTo(new ByteSlice(right.getAddress()));
                 }
                 return cmp;
             }
@@ -164,7 +164,7 @@ public abstract class NetworkUtils {
 
     /** Returns system default for SO_REUSEADDR */
     public static boolean defaultReuseAddress() {
-        return Constants.WINDOWS ? false : true;
+        return Platform.WINDOWS ? false : true;
     }
 
     private static InetAddress[] filterAllAddresses(final Predicate<InetAddress> predicate, final String message) throws IOException {

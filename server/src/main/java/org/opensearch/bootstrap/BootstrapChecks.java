@@ -35,13 +35,13 @@ package org.opensearch.bootstrap;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
-import org.apache.lucene.util.Constants;
 import org.opensearch.bootstrap.jvm.DenyJvmVersionsParser;
 import org.opensearch.cluster.node.DiscoveryNodeRole;
 import org.opensearch.common.SuppressForbidden;
 import org.opensearch.common.io.PathUtils;
 import org.opensearch.core.common.transport.BoundTransportAddress;
 import org.opensearch.core.common.transport.TransportAddress;
+import org.opensearch.core.util.Platform;
 import org.opensearch.env.Environment;
 import org.opensearch.javaagent.bootstrap.AgentPolicy;
 import org.opensearch.monitor.jvm.JvmInfo;
@@ -192,19 +192,19 @@ final class BootstrapChecks {
     static List<BootstrapCheck> checks() {
         final List<BootstrapCheck> checks = new ArrayList<>();
         checks.add(new HeapSizeCheck());
-        final FileDescriptorCheck fileDescriptorCheck = Constants.MAC_OS_X ? new OsXFileDescriptorCheck() : new FileDescriptorCheck();
+        final FileDescriptorCheck fileDescriptorCheck = Platform.MAC_OS_X ? new OsXFileDescriptorCheck() : new FileDescriptorCheck();
         checks.add(fileDescriptorCheck);
         checks.add(new MlockallCheck());
-        if (Constants.LINUX) {
+        if (Platform.LINUX) {
             checks.add(new MaxNumberOfThreadsCheck());
         }
-        if (Constants.LINUX || Constants.MAC_OS_X) {
+        if (Platform.LINUX || Platform.MAC_OS_X) {
             checks.add(new MaxSizeVirtualMemoryCheck());
         }
-        if (Constants.LINUX || Constants.MAC_OS_X) {
+        if (Platform.LINUX || Platform.MAC_OS_X) {
             checks.add(new MaxFileSizeCheck());
         }
-        if (Constants.LINUX) {
+        if (Platform.LINUX) {
             checks.add(new MaxMapCountCheck());
         }
         checks.add(new ClientJvmCheck());
@@ -678,7 +678,7 @@ final class BootstrapChecks {
         }
 
         String jvmVendor() {
-            return Constants.JVM_VENDOR;
+            return Platform.JVM_VENDOR;
         }
 
         String javaVersion() {

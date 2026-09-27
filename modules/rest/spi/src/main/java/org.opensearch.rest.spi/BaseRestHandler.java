@@ -34,7 +34,6 @@ package org.opensearch.rest.spi;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.CollectionUtil;
 import org.opensearch.common.CheckedConsumer;
 import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.common.annotation.PublicApi;
@@ -134,7 +133,7 @@ public abstract class BaseRestHandler implements org.opensearch.rest.spi.RestHan
         boolean first = true;
         for (final String invalid : invalids) {
             final List<Tuple<Float, String>> scoredParams = new ArrayList<>();
-            CollectionUtil.timSort(scoredParams, (a, b) -> {
+            scoredParams.sort((a, b) -> {
                 // sort by distance in reverse order, then parameter name for equal distances
                 int compare = a.v1().compareTo(b.v1());
                 if (compare != 0) return -compare;

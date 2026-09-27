@@ -91,10 +91,20 @@ public final class IndexSearchApiPlugin extends Plugin implements IndexExtension
         protected RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) {
             String index = request.param("index");
             Map<String, Object> body = request.getHttpRequest().content().length() == 0 ? Map.of() : RestJson.object(request, 65536);
-            RestJson.fields(body, Set.of("query", "size"));
+            RestJson.fields(body, Set.of("query", "size", "minimum_checkpoint", "wait_timeout_millis"));
             int size = body.containsKey("size") ? RestJson.integer(body.get("size"), "size", 1, 1000) : 10;
             SearchQuery query = body.containsKey("query") ? query(body.get("query"), 0, new int[1]) : new SearchQuery.All();
-            IndexRequest.Search action = new IndexRequest.Search(index, query, size);
+            org.opensearch.engine.api.Checkpoint minimum = body.containsKey("minimum_checkpoint")
+                ? checkpoint(body.get("minimum_checkpoint"))
+                : null;
+            if (minimum == null && body.containsKey("wait_timeout_millis")) throw new IllegalArgumentException(
+                "wait_timeout_millis requires minimum_checkpoint"
+            );
+            int wait = body.containsKey("wait_timeout_millis")
+                ? RestJson.integer(body.get("wait_timeout_millis"), "wait_timeout_millis", 0, 30000)
+                : minimum == null ? 0
+                : 1000;
+            IndexRequest.Search action = new IndexRequest.Search(index, query, size, minimum, wait);
             return channel -> client.execute(IndexActions.SEARCH, action, new RestBuilderListener<>(channel) {
                 @Override
                 public RestResponse buildResponse(IndexResponse.Search response, XContentBuilder builder) throws Exception {
@@ -102,6 +112,19 @@ public final class IndexSearchApiPlugin extends Plugin implements IndexExtension
                     return new BytesRestResponse(RestStatus.OK, builder);
                 }
             });
+        }
+
+        private static org.opensearch.engine.api.Checkpoint checkpoint(Object value) {
+            Map<String, Object> body = RestJson.object(value, "minimum_checkpoint");
+            RestJson.fields(body, Set.of("index_uuid", "shard", "history", "sequence"));
+            return new org.opensearch.engine.api.Checkpoint(
+                new org.opensearch.engine.api.ShardId(
+                    java.util.UUID.fromString(RestJson.string(body.get("index_uuid"), "index_uuid")),
+                    RestJson.integer(body.get("shard"), "shard", 0, Integer.MAX_VALUE)
+                ),
+                java.util.UUID.fromString(RestJson.string(body.get("history"), "history")),
+                RestJson.longInteger(body.get("sequence"), "sequence", 0, Long.MAX_VALUE)
+            );
         }
 
         private static SearchQuery query(Object value, int depth, int[] count) {

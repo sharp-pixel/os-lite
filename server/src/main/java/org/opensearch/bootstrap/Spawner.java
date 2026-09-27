@@ -32,8 +32,8 @@
 
 package org.opensearch.bootstrap;
 
-import org.apache.lucene.util.Constants;
 import org.opensearch.common.util.io.IOUtils;
+import org.opensearch.core.util.Platform;
 import org.opensearch.env.Environment;
 import org.opensearch.plugins.Platforms;
 import org.opensearch.plugins.PluginInfo;
@@ -112,7 +112,7 @@ final class Spawner implements Closeable {
      */
     private Process spawnNativeController(final Path spawnPath, final Path tmpPath, final boolean inheritIo) throws IOException {
         final String command;
-        if (Constants.WINDOWS) {
+        if (Platform.WINDOWS) {
             /*
              * We have to get the short path name or starting the process could fail due to max path limitations. The underlying issue here
              * is that starting the process on Windows ultimately involves the use of CreateProcessW. CreateProcessW has a limitation that

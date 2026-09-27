@@ -65,7 +65,7 @@ public final class NodeAndClusterIdConverter extends LogEventPatternConverter {
 
     /**
      * Updates only once the clusterID and nodeId.
-     * Subsequent executions will throw {@link org.apache.lucene.util.SetOnce.AlreadySetException}.
+     * Subsequent executions will throw {@link org.opensearch.common.SetOnce.AlreadySetException}.
      *
      * @param nodeId      a nodeId received from cluster state update
      * @param clusterUUID a clusterId received from cluster state update

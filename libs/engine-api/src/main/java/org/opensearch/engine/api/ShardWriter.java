@@ -16,6 +16,11 @@ public interface ShardWriter extends AutoCloseable {
 
     Checkpoint checkpoint();
 
+    /** Pins a committed snapshot until its source is closed. */
+    default SnapshotSource snapshot(OperationContext context) {
+        throw new EngineException(EngineException.Code.UNSUPPORTED, "provider does not support snapshots");
+    }
+
     @Override
     void close();
 }

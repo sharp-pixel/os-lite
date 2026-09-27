@@ -36,3 +36,17 @@ subprojects {
     checkDeps(configurations.testCompileClasspath)
   }
 }
+
+// Production engine dependencies belong exclusively to their provider; tests may use engine fixtures.
+subprojects {
+  if (project.path in [':build-tools', ':modules:lucene-engine']) return
+  pluginManager.withPlugin('java') {
+    [configurations.compileClasspath, configurations.runtimeClasspath].each { configuration ->
+      configuration.resolutionStrategy.eachDependency {
+        if (it.requested.group == 'org.apache.lucene') {
+          throw new GradleException("Lucene dependency is forbidden in ${project.path}:${configuration.name}; put it in lucene-engine")
+        }
+      }
+    }
+  }
+}

@@ -45,5 +45,38 @@ public interface EngineService {
 
     CompletionStage<Optional<EngineDocument>> get(ShardId id, String documentId, OperationContext context);
 
+    /** Creates a writer in private disposable storage for an initial repository publication. */
+    default CompletionStage<Void> createSnapshotWriter(String provider, ShardId id, Schema schema, OperationContext context) {
+        return java.util.concurrent.CompletableFuture.failedFuture(
+            new EngineException(EngineException.Code.UNSUPPORTED, "snapshots are unavailable")
+        );
+    }
+
+    /** Executes a bounded blocking transfer while the runtime owns the source lease. */
+    default <T> CompletionStage<T> withSnapshot(ShardId id, SnapshotOperation<T> transfer, OperationContext context) {
+        return java.util.concurrent.CompletableFuture.failedFuture(
+            new EngineException(EngineException.Code.UNSUPPORTED, "snapshots are unavailable")
+        );
+    }
+
+    /** Opens and closes the source on a worker, verifies its files, then installs the exact snapshot atomically. */
+    default CompletionStage<Checkpoint> installSnapshot(
+        String provider,
+        ShardId id,
+        Schema schema,
+        Mode mode,
+        java.util.function.Supplier<SnapshotSource> source,
+        OperationContext context
+    ) {
+        return java.util.concurrent.CompletableFuture.failedFuture(
+            new EngineException(EngineException.Code.UNSUPPORTED, "snapshot installation is unavailable")
+        );
+    }
+
+    @FunctionalInterface
+    interface SnapshotOperation<T> {
+        T run(SnapshotSource source) throws java.io.IOException;
+    }
+
     CompletionStage<Void> closeShard(ShardId id, OperationContext context);
 }

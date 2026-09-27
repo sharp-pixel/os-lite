@@ -38,8 +38,6 @@ import org.apache.logging.log4j.core.Appender;
 import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.appender.ConsoleAppender;
 import org.apache.logging.log4j.core.config.Configurator;
-import org.apache.lucene.util.Constants;
-import org.apache.lucene.util.StringHelper;
 import org.opensearch.OpenSearchException;
 import org.opensearch.Version;
 import org.opensearch.cli.Terminal;
@@ -56,6 +54,7 @@ import org.opensearch.common.settings.Settings;
 import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.core.common.settings.SecureString;
 import org.opensearch.core.common.transport.BoundTransportAddress;
+import org.opensearch.core.util.Platform;
 import org.opensearch.env.Environment;
 import org.opensearch.monitor.jvm.JvmInfo;
 import org.opensearch.monitor.os.OsProbe;
@@ -130,7 +129,7 @@ final class Bootstrap {
 
         // mlockall if requested
         if (mlockAll) {
-            if (Constants.WINDOWS) {
+            if (Platform.WINDOWS) {
                 Natives.tryVirtualLock();
             } else {
                 Natives.tryMlockall();
@@ -167,8 +166,8 @@ final class Bootstrap {
         Natives.trySetMaxSizeVirtualMemory();
         Natives.trySetMaxFileSize();
 
-        // init lucene random seed. it will use /dev/urandom where available:
-        StringHelper.randomId();
+        // Initialize the host random source before applying process restrictions.
+        java.util.UUID.randomUUID();
     }
 
     static void initializeProbes() {
@@ -401,9 +400,6 @@ final class Bootstrap {
                 closeSystOut();
             }
 
-            // fail if somebody replaced the lucene jars
-            checkLucene();
-
             // install the default uncaught exception handler; must be done before security is
             // initialized as we do not want to grant the runtime permission
             // setDefaultUncaughtExceptionHandler
@@ -478,18 +474,6 @@ final class Bootstrap {
     @SuppressForbidden(reason = "System#err")
     private static void closeSysError() {
         System.err.close();
-    }
-
-    private static void checkLucene() {
-        if (Version.CURRENT.luceneVersion.equals(org.apache.lucene.util.Version.LATEST) == false) {
-            throw new AssertionError(
-                "Lucene version mismatch this version of OpenSearch requires lucene version ["
-                    + Version.CURRENT.luceneVersion
-                    + "]  but the current lucene version is ["
-                    + org.apache.lucene.util.Version.LATEST
-                    + "]"
-            );
-        }
     }
 
 }

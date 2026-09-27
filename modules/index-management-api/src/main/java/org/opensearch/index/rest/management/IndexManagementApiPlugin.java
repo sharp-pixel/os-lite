@@ -37,7 +37,41 @@ import java.util.Set;
 public final class IndexManagementApiPlugin extends Plugin implements IndexExtension, RestHandlerPlugin {
     @Override
     public List<RestHandler> getRestHandlers() {
-        return List.of(new Handler());
+        return List.of(new Handler(), new ClaimHandler());
+    }
+
+    public static final class ClaimHandler extends BaseRestHandler {
+        @Override
+        public String getName() {
+            return "repository_writer_claim";
+        }
+
+        @Override
+        public RestOperationCategory operationCategory() {
+            return RestOperationCategory.MANAGEMENT;
+        }
+
+        @Override
+        public List<Route> routes() {
+            return List.of(new Route(HttpRequest.Method.POST, "/{index}/_writer"));
+        }
+
+        @Override
+        protected RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) {
+            Map<String, Object> body = RestJson.object(request, 1024);
+            RestJson.fields(body, Set.of("expected_epoch"));
+            IndexRequest.Claim action = new IndexRequest.Claim(
+                request.param("index"),
+                RestJson.longInteger(body.get("expected_epoch"), "expected_epoch", 1, Long.MAX_VALUE)
+            );
+            return channel -> client.execute(IndexActions.CLAIM, action, new RestBuilderListener<>(channel) {
+                @Override
+                public RestResponse buildResponse(IndexResponse.Metadata response, XContentBuilder builder) throws Exception {
+                    response.toXContent(builder, request);
+                    return new BytesRestResponse(RestStatus.OK, builder);
+                }
+            });
+        }
     }
 
     public static final class Handler extends BaseRestHandler {

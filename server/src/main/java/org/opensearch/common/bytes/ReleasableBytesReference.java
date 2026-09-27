@@ -32,10 +32,10 @@
 
 package org.opensearch.common.bytes;
 
-import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.BytesRefIterator;
 import org.opensearch.common.concurrent.RefCountedReleasable;
 import org.opensearch.common.lease.Releasable;
+import org.opensearch.core.common.bytes.ByteSlice;
+import org.opensearch.core.common.bytes.ByteSliceIterator;
 import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.xcontent.XContentBuilder;
@@ -134,12 +134,12 @@ public final class ReleasableBytesReference implements Releasable, BytesReferenc
     }
 
     @Override
-    public BytesRef toBytesRef() {
-        return delegate.toBytesRef();
+    public ByteSlice toByteSlice() {
+        return delegate.toByteSlice();
     }
 
     @Override
-    public BytesRefIterator iterator() {
+    public ByteSliceIterator iterator() {
         return delegate.iterator();
     }
 

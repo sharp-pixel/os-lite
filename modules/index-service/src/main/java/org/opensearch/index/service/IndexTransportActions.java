@@ -64,6 +64,18 @@ public final class IndexTransportActions {
         }
     }
 
+    public static final class Claim extends Base<IndexRequest.Claim, IndexResponse.Metadata> {
+        @Inject
+        public Claim(TransportService transport, ActionFilters filters, LocalIndexService indices) {
+            super(IndexActions.CLAIM, IndexRequest.Claim::new, transport, filters, indices);
+        }
+
+        @Override
+        CompletionStage<IndexResponse.Metadata> perform(IndexRequest.Claim request, OperationContext context) {
+            return indices.claim(request, context);
+        }
+    }
+
     public static final class Create extends Base<IndexRequest.Create, IndexResponse.Metadata> {
         @Inject
         public Create(TransportService transport, ActionFilters filters, LocalIndexService indices) {

@@ -32,8 +32,8 @@
 
 package org.opensearch.common.util;
 
-import org.apache.lucene.util.ArrayUtil;
-import org.apache.lucene.util.RamUsageEstimator;
+import org.opensearch.core.util.ArraySizing;
+import org.opensearch.core.util.MemorySize;
 
 import java.util.Arrays;
 
@@ -113,7 +113,7 @@ final class BigIntArray extends AbstractBigArray implements IntArray {
     public void resize(long newSize) {
         final int numPages = numPages(newSize);
         if (numPages > pages.length) {
-            pages = Arrays.copyOf(pages, ArrayUtil.oversize(numPages, RamUsageEstimator.NUM_BYTES_OBJECT_REF));
+            pages = Arrays.copyOf(pages, ArraySizing.oversize(numPages, MemorySize.NUM_BYTES_OBJECT_REF));
         }
         for (int i = numPages - 1; i >= 0 && pages[i] == null; --i) {
             pages[i] = newIntPage(i);

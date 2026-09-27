@@ -22,8 +22,34 @@ testingConventions.enabled = false
 
 dependencies {
     compileOnly project(':libs:engine-api')
-    compileOnly libs.lucene.core
+    implementation libs.lucene.core
     testImplementation project(':modules:engine')
     testImplementation libs.bundles.unit.test
+    testImplementation libs.lucene.test.framework
     testRuntimeOnly libs.lucene.codecs
+}
+
+// The provider validates its own engine version; the host has no Lucene version contract.
+def luceneResources = layout.buildDirectory.dir('generated/lucene-resources')
+def generateLuceneVersion = tasks.register('generateLuceneVersion') {
+    inputs.property('luceneVersion', libs.versions.lucene.get())
+    outputs.dir(luceneResources)
+    doLast {
+        def target = luceneResources.get().file('org/opensearch/engine/lucene/lucene-runtime.properties').asFile
+        target.parentFile.mkdirs()
+        target.text = "version=${libs.versions.lucene.get()}\n"
+    }
+}
+sourceSets.main.resources.srcDir(luceneResources)
+tasks.named('processResources').configure { dependsOn generateLuceneVersion }
+
+// Lucene-specific forbidden API signatures can only be resolved in the provider.
+['forbiddenApisMain', 'forbiddenApisTest'].each { taskName ->
+    tasks.named(taskName).configure {
+        signaturesFiles = signaturesFiles + files('forbidden-lucene-signatures.txt')
+    }
+}
+
+tasks.named('forbiddenApisTest').configure {
+    signaturesFiles = signaturesFiles + files('forbidden-lucene-test-signatures.txt')
 }

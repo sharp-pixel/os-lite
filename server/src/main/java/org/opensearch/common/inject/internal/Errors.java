@@ -29,7 +29,6 @@
 
 package org.opensearch.common.inject.internal;
 
-import org.apache.lucene.util.CollectionUtil;
 import org.opensearch.common.inject.ConfigurationException;
 import org.opensearch.common.inject.CreationException;
 import org.opensearch.common.inject.Key;
@@ -497,7 +496,7 @@ public final class Errors {
         }
 
         List<Message> result = new ArrayList<>(root.errors);
-        CollectionUtil.timSort(result, new Comparator<Message>() {
+        result.sort(new Comparator<Message>() {
             @Override
             public int compare(Message a, Message b) {
                 return a.getSource().compareTo(b.getSource());

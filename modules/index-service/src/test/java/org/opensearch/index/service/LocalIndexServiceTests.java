@@ -94,6 +94,24 @@ public class LocalIndexServiceTests extends RandomizedTest {
         }
     }
 
+    public void testLocalMinimumCheckpointHonorsWaitAndTimeout() throws Exception {
+        try (Fixture fixture = fixture(newTempDir(), Settings.EMPTY)) {
+            await(fixture.indices.create(create(), context()));
+            var initial = await(fixture.indices.refresh(new IndexRequest.Refresh("books"), context())).checkpoint();
+            var future = new org.opensearch.engine.api.Checkpoint(initial.shard(), initial.history(), 1);
+            var waiting = fixture.indices.search(new IndexRequest.Search("books", new SearchQuery.All(), 10, future, 5000), context());
+            await(fixture.indices.put(put("1", "visible"), context()));
+            assertEquals(1, await(waiting).result().totalHits());
+            var missing = new org.opensearch.engine.api.Checkpoint(initial.shard(), initial.history(), 2);
+            assertEquals(
+                EngineException.Code.DEADLINE_EXCEEDED,
+                ((EngineException) failure(
+                    fixture.indices.search(new IndexRequest.Search("books", new SearchQuery.All(), 10, missing, 20), context())
+                )).code()
+            );
+        }
+    }
+
     public void testDuplicateMissingAndUnsupportedProvider() throws Exception {
         try (Fixture fixture = fixture(newTempDir(), Settings.EMPTY)) {
             await(fixture.indices.create(create(), context()));

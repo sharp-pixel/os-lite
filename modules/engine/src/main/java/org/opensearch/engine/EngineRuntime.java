@@ -27,6 +27,8 @@ import org.opensearch.engine.api.ShardId;
 import org.opensearch.engine.api.ShardReader;
 import org.opensearch.engine.api.ShardSpec;
 import org.opensearch.engine.api.ShardWriter;
+import org.opensearch.engine.api.SnapshotManifest;
+import org.opensearch.engine.api.SnapshotSource;
 import org.opensearch.engine.api.WriteResult;
 
 import java.io.IOException;
@@ -69,6 +71,7 @@ public final class EngineRuntime extends AbstractLifecycleComponent implements E
     private final Path root;
     private final Settings settings;
     private final Map<ShardId, ManagedShard> shards = new HashMap<>();
+    private final Object snapshotInstallLock = new Object();
     private final AtomicLong pendingBytes = new AtomicLong();
     private final long byteLimit;
     private final Set<String> roles;
@@ -173,6 +176,10 @@ public final class EngineRuntime extends AbstractLifecycleComponent implements E
     }
 
     private synchronized void open(String providerId, ShardId id, Schema schema, Mode mode) throws IOException {
+        open(providerId, id, schema, mode, null);
+    }
+
+    private synchronized void open(String providerId, ShardId id, Schema schema, Mode mode, Path privateDirectory) throws IOException {
         if (shards.containsKey(id)) throw new EngineException(CONFLICT, "shard already open: " + id);
         if (shards.size() >= EnginePlugin.SHARDS.get(settings)) throw new EngineException(RESOURCE_LIMIT, "too many open shards");
         EngineProvider provider = providers.get(providerId);
@@ -186,7 +193,9 @@ public final class EngineRuntime extends AbstractLifecycleComponent implements E
         if (supportsMode(mode) == false) {
             throw new EngineException(UNSUPPORTED, "requested shard execution role is disabled on this node");
         }
-        Path directory = root.resolve(id.indexId().toString()).resolve(Integer.toString(id.shard()));
+        Path directory = privateDirectory == null
+            ? root.resolve(id.indexId().toString()).resolve(Integer.toString(id.shard()))
+            : privateDirectory;
         Path marker = directory.resolve("engine.id");
         if (writerMode) {
             createDirectoriesDurably(directory);
@@ -209,7 +218,7 @@ public final class EngineRuntime extends AbstractLifecycleComponent implements E
         boolean success = false;
         try {
             reader = readerMode ? provider.openReader(spec) : null;
-            shards.put(id, new ManagedShard(writer, reader));
+            shards.put(id, new ManagedShard(writer, reader, privateDirectory));
             success = true;
         } finally {
             if (success == false) {
@@ -259,6 +268,135 @@ public final class EngineRuntime extends AbstractLifecycleComponent implements E
                 return view.get(documentId, context);
             }
         }));
+    }
+
+    @Override
+    public CompletionStage<Void> createSnapshotWriter(String provider, ShardId id, Schema schema, OperationContext context) {
+        return submit(1024, context, () -> {
+            synchronized (snapshotInstallLock) {
+                EngineProvider factory = providers.get(provider);
+                if (factory == null || factory.snapshotFormats().isEmpty()) throw new EngineException(
+                    UNSUPPORTED,
+                    "provider does not support snapshot publication"
+                );
+                Path directory = root.resolve(".snapshots")
+                    .resolve(id.indexId().toString())
+                    .resolve(Integer.toString(id.shard()))
+                    .resolve(java.util.UUID.randomUUID().toString());
+                boolean success = false;
+                try {
+                    open(provider, id, schema, Mode.WRITE_ONLY, directory);
+                    success = true;
+                    return null;
+                } finally {
+                    if (success == false) SnapshotStorage.delete(directory);
+                }
+            }
+        });
+    }
+
+    @Override
+    public <T> CompletionStage<T> withSnapshot(ShardId id, SnapshotOperation<T> transfer, OperationContext context) {
+        return submit(65536, context, () -> use(id, shard -> {
+            if (shard.writer == null) throw new EngineException(UNSUPPORTED, "snapshot export requires a writer");
+            try (SnapshotSource source = shard.writer.snapshot(context)) {
+                return transfer.run(source);
+            } catch (IOException e) {
+                throw new EngineException(IO_ERROR, "snapshot transfer failed", e);
+            }
+        }));
+    }
+
+    @Override
+    public CompletionStage<Checkpoint> installSnapshot(
+        String providerId,
+        ShardId id,
+        Schema schema,
+        Mode mode,
+        java.util.function.Supplier<SnapshotSource> source,
+        OperationContext context
+    ) {
+        Objects.requireNonNull(source);
+        return submit(65536, context, () -> {
+            synchronized (snapshotInstallLock) {
+                context.check();
+                if (mode == Mode.READ_WRITE || supportsMode(mode) == false) throw new EngineException(
+                    UNSUPPORTED,
+                    "snapshot installation requires one enabled execution role"
+                );
+                EngineProvider provider = providers.get(providerId);
+                if (provider == null) throw new EngineException(UNSUPPORTED, "snapshot provider is not installed");
+                ManagedShard previous;
+                synchronized (this) {
+                    previous = shards.get(id);
+                    if (previous != null && (previous.writer != null || previous.snapshotDirectory == null || mode != Mode.READ_ONLY)) {
+                        throw new EngineException(CONFLICT, "only snapshot readers can be refreshed in place");
+                    }
+                    if (previous == null && shards.size() >= EnginePlugin.SHARDS.get(settings)) {
+                        throw new EngineException(RESOURCE_LIMIT, "too many open shards");
+                    }
+                }
+                Path parent = root.resolve(".snapshots").resolve(id.indexId().toString()).resolve(Integer.toString(id.shard()));
+                Files.createDirectories(parent);
+                // The repository profile holds a node-storage lock before using this private cache.
+                try (var children = Files.newDirectoryStream(parent)) {
+                    for (Path child : children) {
+                        if (previous == null || child.equals(previous.snapshotDirectory) == false) SnapshotStorage.delete(child);
+                    }
+                }
+                Path directory = parent.resolve(java.util.UUID.randomUUID().toString());
+                ShardWriter writer = null;
+                ShardReader reader = null;
+                boolean installed = false;
+                try (SnapshotSource snapshot = source.get()) {
+                    SnapshotManifest manifest = snapshot.manifest();
+                    if (manifest.provider().equals(providerId) == false
+                        || manifest.schema().equals(schema) == false
+                        || manifest.checkpoint().shard().equals(id) == false
+                        || provider.snapshotFormats().contains(manifest.format()) == false) {
+                        throw new EngineException(INCOMPATIBLE, "snapshot provider, format, schema or shard differs");
+                    }
+                    SnapshotStorage.copy(snapshot, directory, context);
+                    context.check();
+                    ShardSpec spec = new ShardSpec(id, directory, schema);
+                    Checkpoint actual;
+                    if (mode == Mode.WRITE_ONLY) {
+                        writer = provider.openWriter(spec);
+                        actual = writer.checkpoint();
+                    } else {
+                        reader = provider.openReader(spec);
+                        try (ReadView view = reader.acquireView()) {
+                            actual = view.checkpoint();
+                        }
+                    }
+                    if (actual.equals(manifest.checkpoint()) == false) throw new EngineException(
+                        INCOMPATIBLE,
+                        "snapshot checkpoint differs"
+                    );
+                    context.check();
+                    synchronized (this) {
+                        if (shards.get(id) != previous) throw new EngineException(CONFLICT, "shard changed during snapshot installation");
+                        if (previous == null) {
+                            if (shards.size() >= EnginePlugin.SHARDS.get(settings)) throw new EngineException(
+                                RESOURCE_LIMIT,
+                                "too many open shards"
+                            );
+                            shards.put(id, new ManagedShard(writer, reader, directory));
+                        } else {
+                            previous.replaceReader(reader, directory);
+                        }
+                        installed = true;
+                    }
+                    return actual;
+                } finally {
+                    if (installed == false) {
+                        closeQuietly(reader);
+                        closeQuietly(writer);
+                        SnapshotStorage.delete(directory);
+                    }
+                }
+            }
+        });
     }
 
     @Override
@@ -353,15 +491,40 @@ public final class EngineRuntime extends AbstractLifecycleComponent implements E
         shards.clear();
     }
 
-    private static final class ManagedShard {
+    private final class ManagedShard {
         final ShardWriter writer;
-        final ShardReader reader;
+        ShardReader reader;
+        Path snapshotDirectory;
         final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
         boolean closed;
 
         ManagedShard(ShardWriter writer, ShardReader reader) {
+            this(writer, reader, null);
+        }
+
+        ManagedShard(ShardWriter writer, ShardReader reader, Path snapshotDirectory) {
             this.writer = writer;
             this.reader = reader;
+            this.snapshotDirectory = snapshotDirectory;
+        }
+
+        void replaceReader(ShardReader replacement, Path directory) {
+            lock.writeLock().lock();
+            try {
+                if (closed) throw new EngineException(CLOSED, "shard is closed");
+                ShardReader previous = reader;
+                Path previousDirectory = snapshotDirectory;
+                reader = replacement;
+                snapshotDirectory = directory;
+                try {
+                    previous.close();
+                    SnapshotStorage.delete(previousDirectory);
+                } catch (Exception e) {
+                    closeFailure = new IOException("old snapshot cleanup failed", e);
+                }
+            } finally {
+                lock.writeLock().unlock();
+            }
         }
 
         ShardReader reader() {
@@ -387,6 +550,11 @@ public final class EngineRuntime extends AbstractLifecycleComponent implements E
                     else failure.addSuppressed(e);
                 }
                 if (failure != null) throw failure;
+                try {
+                    SnapshotStorage.delete(snapshotDirectory);
+                } catch (IOException e) {
+                    throw new EngineException(IO_ERROR, "cannot remove private snapshot copy", e);
+                }
             } finally {
                 lock.writeLock().unlock();
             }

@@ -34,10 +34,6 @@ package org.opensearch.plugins;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.codecs.Codec;
-import org.apache.lucene.codecs.DocValuesFormat;
-import org.apache.lucene.codecs.KnnVectorsFormat;
-import org.apache.lucene.codecs.PostingsFormat;
 import org.opensearch.Build;
 import org.opensearch.OpenSearchException;
 import org.opensearch.Version;
@@ -709,9 +705,6 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         ClassLoader parentLoader = PluginLoaderIndirection.createLoader(getClass().getClassLoader(), extendedLoaders);
         ClassLoader loader = URLClassLoader.newInstance(bundle.urls.toArray(new URL[0]), parentLoader);
 
-        // reload SPI with any new services from the plugin
-        reloadLuceneSPI(loader);
-
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
         try {
             // Set context class loader to plugin's class loader so that plugins
@@ -738,21 +731,6 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         } finally {
             Thread.currentThread().setContextClassLoader(cl);
         }
-    }
-
-    /**
-     * Reloads all Lucene SPI implementations using the new classloader.
-     * This method must be called after the new classloader has been created to
-     * register the services for use.
-     */
-    static void reloadLuceneSPI(ClassLoader loader) {
-        // do NOT change the order of these method calls!
-
-        // Codecs:
-        PostingsFormat.reloadPostingsFormats(loader);
-        DocValuesFormat.reloadDocValuesFormats(loader);
-        KnnVectorsFormat.reloadKnnVectorsFormat(loader);
-        Codec.reloadCodecs(loader);
     }
 
     private Class<? extends Plugin> loadPluginClass(String className, ClassLoader loader) {

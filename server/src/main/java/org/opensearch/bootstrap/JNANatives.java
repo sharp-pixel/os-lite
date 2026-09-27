@@ -38,7 +38,7 @@ import com.sun.jna.WString;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.Constants;
+import org.opensearch.core.util.Platform;
 import org.opensearch.monitor.jvm.JvmInfo;
 
 import java.nio.file.Path;
@@ -89,7 +89,7 @@ class JNANatives {
 
             errno = Native.getLastError();
             errMsg = JNACLibrary.strerror(errno);
-            if (Constants.LINUX || Constants.MAC_OS_X) {
+            if (Platform.LINUX || Platform.MAC_OS_X) {
                 // we only know RLIMIT_MEMLOCK for these two at the moment.
                 JNACLibrary.Rlimit rlimit = new JNACLibrary.Rlimit();
                 if (JNACLibrary.getrlimit(JNACLibrary.RLIMIT_MEMLOCK, rlimit) == 0) {
@@ -115,7 +115,7 @@ class JNANatives {
                     rlimitToString(softLimit),
                     rlimitToString(hardLimit)
                 );
-                if (Constants.LINUX) {
+                if (Platform.LINUX) {
                     // give specific instructions for the linux case to make it easy
                     String user = System.getProperty("user.name");
                     logger.warn(
@@ -136,7 +136,7 @@ class JNANatives {
     }
 
     static void trySetMaxNumberOfThreads() {
-        if (Constants.LINUX) {
+        if (Platform.LINUX) {
             // this is only valid on Linux and the value *is* different on OS X
             // see /usr/include/sys/resource.h on OS X
             // on Linux the resource RLIMIT_NPROC means *the number of threads*
@@ -153,7 +153,7 @@ class JNANatives {
     }
 
     static void trySetMaxSizeVirtualMemory() {
-        if (Constants.LINUX || Constants.MAC_OS_X) {
+        if (Platform.LINUX || Platform.MAC_OS_X) {
             final JNACLibrary.Rlimit rlimit = new JNACLibrary.Rlimit();
             if (JNACLibrary.getrlimit(JNACLibrary.RLIMIT_AS, rlimit) == 0) {
                 MAX_SIZE_VIRTUAL_MEMORY = rlimit.rlim_cur.longValue();
@@ -164,7 +164,7 @@ class JNANatives {
     }
 
     static void trySetMaxFileSize() {
-        if (Constants.LINUX || Constants.MAC_OS_X) {
+        if (Platform.LINUX || Platform.MAC_OS_X) {
             final JNACLibrary.Rlimit rlimit = new JNACLibrary.Rlimit();
             if (JNACLibrary.getrlimit(JNACLibrary.RLIMIT_FSIZE, rlimit) == 0) {
                 MAX_FILE_SIZE = rlimit.rlim_cur.longValue();
@@ -175,7 +175,7 @@ class JNANatives {
     }
 
     static String rlimitToString(long value) {
-        assert Constants.LINUX || Constants.MAC_OS_X;
+        assert Platform.LINUX || Platform.MAC_OS_X;
         if (value == JNACLibrary.RLIM_INFINITY) {
             return "unlimited";
         } else {
@@ -185,7 +185,7 @@ class JNANatives {
 
     /** Returns true if user is root, false if not, or if we don't know */
     static boolean definitelyRunningAsRoot() {
-        if (Constants.WINDOWS) {
+        if (Platform.WINDOWS) {
             return false; // don't know
         }
         try {
@@ -238,7 +238,7 @@ class JNANatives {
      * @return the short path name (or the original path if getting the short path name fails for any reason)
      */
     static String getShortPathName(String path) {
-        assert Constants.WINDOWS;
+        assert Platform.WINDOWS;
         try {
             final WString longPath = new WString("\\\\?\\" + path);
             // first we get the length of the buffer needed
@@ -262,7 +262,7 @@ class JNANatives {
 
     static void addConsoleCtrlHandler(ConsoleCtrlHandler handler) {
         // The console Ctrl handler is necessary on Windows platforms only.
-        if (Constants.WINDOWS) {
+        if (Platform.WINDOWS) {
             try {
                 boolean result = JNAKernel32Library.getInstance().addConsoleCtrlHandler(handler);
                 if (result) {

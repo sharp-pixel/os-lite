@@ -12,6 +12,10 @@ package org.opensearch.engine.api;
 public interface EngineProvider {
     EngineDescriptor descriptor();
 
+    default java.util.Set<String> snapshotFormats() {
+        return java.util.Set.of();
+    }
+
     ShardWriter openWriter(ShardSpec shard);
 
     ShardReader openReader(ShardSpec shard);

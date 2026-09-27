@@ -256,7 +256,7 @@ public class XContentHelper {
 
     @Deprecated
     public static String convertToJson(BytesReference bytes, boolean reformatJson, boolean prettyPrint) throws IOException {
-        return convertToJson(bytes, reformatJson, prettyPrint, MediaTypeRegistry.xContent(bytes.toBytesRef().bytes));
+        return convertToJson(bytes, reformatJson, prettyPrint, MediaTypeRegistry.xContent(bytes.toByteSlice().bytes));
     }
 
     public static String convertToJson(BytesReference bytes, boolean reformatJson, MediaType mediaType) throws IOException {

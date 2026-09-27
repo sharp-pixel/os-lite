@@ -1,0 +1,28 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The OpenSearch Contributors require contributions made to
+ * this file be licensed under the Apache-2.0 license or a
+ * compatible open source license.
+ */
+
+opensearchplugin {
+    description = 'Filesystem snapshot publication reference provider'
+    classname = 'org.opensearch.snapshot.filesystem.FilesystemSnapshotPlugin'
+    extendedPlugins = ['index-service']
+}
+repositories {
+    mavenLocal()
+    maven { url = "https://ci.opensearch.org/ci/dbc/snapshots/maven/" }
+    mavenCentral()
+}
+testingConventions.enabled = false
+dependencies {
+    compileOnly project(':libs:index-api')
+    compileOnly project(':libs:engine-api')
+    testImplementation project(':modules:index-service')
+    testImplementation project(':modules:engine')
+    testImplementation project(':modules:lucene-engine')
+    testImplementation libs.bundles.unit.test
+    testRuntimeOnly libs.lucene.codecs
+}

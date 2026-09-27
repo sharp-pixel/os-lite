@@ -21,7 +21,6 @@ repositories {
 
 dependencies {
     compileOnly project(':server')
-    compileOnly "org.opensearch:opensearch-core:${versions.opensearch}"
     //api "org.opensearch:opensearch-x-content:${versions.opensearch}"
 }
 

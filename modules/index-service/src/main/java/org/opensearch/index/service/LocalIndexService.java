@@ -43,6 +43,7 @@ public final class LocalIndexService extends AbstractLifecycleComponent {
     private final EngineService engine;
     private final Settings settings;
     private final IndexCatalog catalog;
+    private final PublishedIndices published;
     private final Map<String, Entry> indices = new ConcurrentHashMap<>();
     private volatile ThreadPoolExecutor catalogExecutor;
     private volatile boolean accepting;
@@ -50,29 +51,45 @@ public final class LocalIndexService extends AbstractLifecycleComponent {
     private volatile boolean catalogFailed;
 
     @Inject
+    public LocalIndexService(EngineService engine, Environment environment, RepositoryRegistry registry) {
+        this(engine, environment, environment.settings(), registry);
+    }
+
     public LocalIndexService(EngineService engine, Environment environment) {
         this(engine, environment, environment.settings());
     }
 
     public LocalIndexService(EngineService engine, Environment environment, Settings settings) {
-        this(engine, settings, new IndexCatalog(environment.dataFiles()[0].resolve("index-catalog")));
+        this(engine, environment, settings, new RepositoryRegistry(Map.of()));
+    }
+
+    public LocalIndexService(EngineService engine, Environment environment, Settings settings, RepositoryRegistry registry) {
+        this.engine = engine;
+        this.settings = settings;
+        this.catalog = new IndexCatalog(environment.dataFiles()[0].resolve("index-catalog"));
+        this.published = IndexServicePlugin.REPOSITORY.get(settings).isEmpty()
+            ? null
+            : new PublishedIndices(engine, environment, settings, registry);
     }
 
     LocalIndexService(EngineService engine, Settings settings, IndexCatalog catalog) {
         this.engine = engine;
         this.settings = settings;
         this.catalog = catalog;
+        this.published = null;
     }
 
     @Override
     protected void doStart() {
         try {
-            catalog.load(IndexServicePlugin.MAX_INDICES.get(settings), engine.supportsMode(EngineService.Mode.WRITE_ONLY))
+            if (published != null) published.start();
+            else catalog.load(IndexServicePlugin.MAX_INDICES.get(settings), engine.supportsMode(EngineService.Mode.WRITE_ONLY))
                 .forEach((name, metadata) -> indices.put(name, new Entry(metadata)));
             catalogExecutor = new CatalogExecutor();
             accepting = true;
         } catch (Exception e) {
             try {
+                if (published != null) published.close();
                 catalog.close();
             } catch (IOException close) {
                 e.addSuppressed(close);
@@ -98,6 +115,7 @@ public final class LocalIndexService extends AbstractLifecycleComponent {
         protected void terminated() {
             boolean interrupted = Thread.interrupted();
             try {
+                if (published != null) published.close();
                 catalog.close();
             } catch (IOException e) {
                 closeFailure = e;
@@ -118,6 +136,7 @@ public final class LocalIndexService extends AbstractLifecycleComponent {
         doStop();
         ThreadPoolExecutor pool = catalogExecutor;
         if (pool == null) {
+            if (published != null) published.close();
             catalog.close();
             return;
         }
@@ -139,6 +158,7 @@ public final class LocalIndexService extends AbstractLifecycleComponent {
     }
 
     public CompletionStage<IndexResponse.Metadata> create(IndexRequest.Create request, OperationContext context) {
+        if (published != null) return submit(context, () -> published.create(request, context));
         return submit(context, () -> {
             if (catalogFailed) throw new EngineException(
                 EngineException.Code.UNAVAILABLE,
@@ -185,6 +205,7 @@ public final class LocalIndexService extends AbstractLifecycleComponent {
     }
 
     public CompletionStage<IndexResponse.Metadata> describe(IndexRequest.Describe request, OperationContext context) {
+        if (published != null) return submit(context, () -> published.describe(request, context));
         try {
             context.check();
             return CompletableFuture.completedFuture(new IndexResponse.Metadata(entry(request.index()).metadata));
@@ -194,6 +215,7 @@ public final class LocalIndexService extends AbstractLifecycleComponent {
     }
 
     public CompletionStage<IndexResponse.Mutation> put(IndexRequest.Put request, OperationContext context) {
+        if (published != null) return submit(context, () -> published.put(request, context));
         return use(
             request.index(),
             context,
@@ -203,6 +225,7 @@ public final class LocalIndexService extends AbstractLifecycleComponent {
     }
 
     public CompletionStage<IndexResponse.Mutation> delete(IndexRequest.Delete request, OperationContext context) {
+        if (published != null) return submit(context, () -> published.delete(request, context));
         return use(
             request.index(),
             context,
@@ -212,6 +235,7 @@ public final class LocalIndexService extends AbstractLifecycleComponent {
     }
 
     public CompletionStage<IndexResponse.Refreshed> refresh(IndexRequest.Refresh request, OperationContext context) {
+        if (published != null) return submit(context, () -> published.refresh(request, context));
         return use(
             request.index(),
             context,
@@ -221,6 +245,7 @@ public final class LocalIndexService extends AbstractLifecycleComponent {
     }
 
     public CompletionStage<IndexResponse.Document> get(IndexRequest.Get request, OperationContext context) {
+        if (published != null) return submit(context, () -> published.get(request, context));
         return use(
             request.index(),
             context,
@@ -230,12 +255,48 @@ public final class LocalIndexService extends AbstractLifecycleComponent {
     }
 
     public CompletionStage<IndexResponse.Search> search(IndexRequest.Search request, OperationContext context) {
+        if (published != null) return submit(context, () -> published.search(request, context));
+        if (request.minimum() != null) return submit(context, () -> {
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(request.waitMillis());
+            while (true) {
+                context.check();
+                var checkpoint = await(use(request.index(), context, entry -> engine.refresh(entry.metadata.shard(), context)));
+                if (checkpoint.covers(request.minimum())) break;
+                if (request.waitMillis() == 0 || System.nanoTime() - deadline >= 0) throw new EngineException(
+                    EngineException.Code.DEADLINE_EXCEEDED,
+                    "minimum checkpoint is not committed before the wait deadline"
+                );
+                java.util.concurrent.locks.LockSupport.parkNanos(Math.min(50_000_000L, Math.max(1, deadline - System.nanoTime())));
+            }
+            return await(searchCurrent(request, context));
+        });
+        return searchCurrent(request, context);
+    }
+
+    private CompletionStage<IndexResponse.Search> searchCurrent(IndexRequest.Search request, OperationContext context) {
         return use(
             request.index(),
             context,
             entry -> engine.search(entry.metadata.shard(), request.query(), request.limit(), context)
                 .thenApply(result -> new IndexResponse.Search(request.index(), result))
         );
+    }
+
+    private static <T> T await(CompletionStage<T> stage) throws Exception {
+        try {
+            return stage.toCompletableFuture().get();
+        } catch (java.util.concurrent.ExecutionException e) {
+            if (e.getCause() instanceof Exception cause) throw cause;
+            if (e.getCause() instanceof Error cause) throw cause;
+            throw e;
+        }
+    }
+
+    public CompletionStage<IndexResponse.Metadata> claim(IndexRequest.Claim request, OperationContext context) {
+        if (published == null) return CompletableFuture.failedFuture(
+            new EngineException(EngineException.Code.UNSUPPORTED, "writer assignment requires a repository")
+        );
+        return submit(context, () -> published.claim(request, context));
     }
 
     private Entry entry(String name) {

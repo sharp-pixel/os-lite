@@ -101,6 +101,14 @@ public final class RestJson {
         throw new IllegalArgumentException(name + " must be an integer from " + minimum + " to " + maximum);
     }
 
+    public static long longInteger(Object value, String name, long minimum, long maximum) {
+        if (value instanceof Integer || value instanceof Long) {
+            long number = ((Number) value).longValue();
+            if (number >= minimum && number <= maximum) return number;
+        }
+        throw new IllegalArgumentException(name + " must be an integer from " + minimum + " to " + maximum);
+    }
+
     public static void fields(Map<String, Object> object, Set<String> allowed) {
         for (String name : object.keySet())
             if (allowed.contains(name) == false) throw new IllegalArgumentException("unsupported field: " + name);

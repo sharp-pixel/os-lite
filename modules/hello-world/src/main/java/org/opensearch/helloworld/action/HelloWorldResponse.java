@@ -53,7 +53,6 @@ public class HelloWorldResponse extends ActionResponse implements ToXContentObje
             .field("build_hash", build.hash())
             .field("build_date", build.date())
             .field("build_snapshot", build.isSnapshot())
-            .field("lucene_version", localNode.getVersion().luceneVersion.toString())
             .field("minimum_wire_compatibility_version", localNode.getVersion().minimumCompatibilityVersion().toString())
             .field("minimum_index_compatibility_version", localNode.getVersion().minimumIndexCompatibilityVersion().toString())
             .endObject();

@@ -9,4 +9,8 @@
 package org.opensearch.index.api;
 
 /** Marker for consumers of the index action SPI; contributes no REST handlers to index-service. @opensearch.experimental */
-public interface IndexExtension {}
+public interface IndexExtension {
+    default java.util.List<SnapshotRepositoryProvider> repositoryProviders() {
+        return java.util.List.of();
+    }
+}

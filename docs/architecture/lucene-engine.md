@@ -1,6 +1,6 @@
 # Pluggable Lucene engine architecture
 
-Status: phases 1–3 implemented as an experimental local search service. Index actions and separate management, indexing, and search REST adapters now use the pluggable engine. Remote snapshots and removal of Lucene from the server classpath remain planned.
+Status: phases 1–5 implemented as experimental local and filesystem-repository profiles. The repository profile supports independent writer/reader nodes, durable snapshot publication, manual writer fencing, and checkpoint waits. Lucene is packaged exclusively with its provider; the host starts and serves metadata without it. See [snapshot publication](snapshot-publication.md) for configuration and operational limits.
 
 ## Decision
 
@@ -8,14 +8,14 @@ Introduce a shard-level engine contract with separate reader and writer interfac
 
 The first implementation runs locally with one writer per shard and committed readers on the same node. It acknowledges writes after a durable local commit. A later deployment can publish immutable snapshots for independent search nodes without changing the REST API or making the coordinator understand Lucene files.
 
-The long-term target is a server that can start without Lucene. Existing Lucene utility dependencies remain during the first implementation and are removed in a separate migration.
+The host can start without Lucene. A local core library owns shared transport and byte contracts; the provider owns Lucene dependencies, compatibility validation, codec discovery, and on-disk formats.
 
 ## Implemented local profile
 
 - `libs/engine-api` contains JDK-only contracts. Its `checkApiDependencies` task rejects production dependencies.
 - `modules/engine` discovers providers, binds one `EngineService`, and owns the lifecycle of shard readers and writers. It packages the API JAR once.
-- `modules/lucene-engine` extends `engine` and supplies provider `lucene`. It uses the centrally versioned Lucene already on the server classpath, without bundling duplicate Lucene or API classes.
-- `libs/index-api` defines versioned, bounded action requests and responses. `modules/index-service` packages this API once, owns the durable index catalog, and registers seven backend-independent transport actions.
+- `modules/lucene-engine` extends `engine` and supplies provider `lucene`. It bundles the centrally versioned Lucene runtime in its own classloader, without duplicating API or host classes.
+- `libs/index-api` defines versioned, bounded action requests and responses. `modules/index-service` packages this API once, owns the durable index catalog, and registers eight backend-independent transport actions.
 - `modules/index-management-api`, `modules/index-indexing-api`, and `modules/index-search-api` each extend index-service and their respective REST category hub. These adapters parse JSON into typed actions and never access Lucene objects.
 - Supported operations are full document replacement, delete, visible get, match-all, exact term, analyzed text match, and Boolean queries. Fields are single-valued strings with explicit `KEYWORD` or `TEXT` mappings; text uses `StandardAnalyzer`.
 - Every successful batch is committed before acknowledgement. The entire batch is validated before application. A failure after application begins is `WRITE_OUTCOME_UNKNOWN` and disables the writer until close/reopen. Closing a writer rolls back any unacknowledged pending changes.
@@ -23,7 +23,7 @@ The long-term target is a server that can start without Lucene. Existing Lucene 
 - Checkpoints persist shard identity, history UUID, and sequence. Writes are serialized per writer, but concurrent submissions have no guaranteed invocation order. Callers chain completion stages when ordering matters.
 - Shards live under the first configured data path at `engines/<index UUID>/<shard ID>`. A durable `engine.id` marker prevents reopening the same shard with a different provider. Lucene commit metadata also validates shard, schema version, schema fields, and format.
 
-The asynchronous `EngineService` is available through explicit Guice binding after plugin components are created and accepts operations after node lifecycle start. Index-service consumes it through injection and opens recovered shards lazily; concurrent first requests share one open operation. Node lifecycle owns index-service, and the engine runtime remains the sole owner of its shard resources.
+The asynchronous `EngineService` is available through explicit Guice binding after plugin components are created and accepts operations after node lifecycle start. Index-service consumes it through injection and opens recovered shards lazily; concurrent first local requests share one open operation. The runtime also exports pinned commit snapshots and verifies snapshot files before installing a reader. Node lifecycle owns index-service, and the engine runtime remains the sole owner of its shard resources.
 
 Example for a consumer plugin extending `engine` and implementing `EngineExtension`:
 
@@ -88,7 +88,7 @@ curl -sS -X POST localhost:9200/books/_search -H 'Content-Type: application/json
 curl -sS localhost:9200/books/_doc/1
 ```
 
-The supported JSON query operators are `match_all`, single-field `term` and `match`, and `bool` with `must`, `should`, `must_not`, and integer `minimum_should_match`. Search accepts `query` and `size` (1–1000, default 10) in the body. An empty body means match-all. Unsupported options and query parameters fail explicitly. Documents contain only single-valued string fields declared in the schema; returned `_source` is the normalized field map. Index names match `[a-z0-9][a-z0-9._-]{0,127}`.
+The supported JSON query operators are `match_all`, single-field `term` and `match`, and `bool` with `must`, `should`, `must_not`, and integer `minimum_should_match`. Search accepts `query` and `size` (1–1000, default 10) in the body. It also accepts `minimum_checkpoint` and `wait_timeout_millis` (0–30000, default 1000 when a minimum is supplied). A minimum-checkpoint search refreshes as needed and either reaches that checkpoint or returns an error. An empty body means match-all. Unsupported options and query parameters fail explicitly. Documents contain only single-valued string fields declared in the schema; returned `_source` is the normalized field map. Index names match `[a-z0-9][a-z0-9._-]{0,127}`.
 
 Create/search bodies are limited to 64 KiB, document bodies to 1 MiB, and parsed JSON to 8192 values and depth 24. The engine document limit also counts the owned source and normalized field values together, so a body below the HTTP limit can still exceed the document limit. Requests have bounded binary encodings, task cancellation, and preserved listener thread context. Engine work uses the bounded engine pool; catalog creation uses a separate single worker with a queue of 64.
 
@@ -98,7 +98,17 @@ Catalog entries live under the first configured data path at `index-catalog/<UUI
 
 `rest.api.categories: [search]` exposes only search handlers. Disabled routes return 404 when no enabled handler matches their path. A shared document path still supports GET, so PUT on that path returns 405 when indexing is disabled. Category filtering does not grant permissions or assign execution roles. `engine.roles` limits local execution even for internal action calls; it does not create distributed routing. Reader-only nodes load the catalog at startup and cannot create indices or write documents.
 
-This profile has no index deletion, bulk API, aliases, schema changes, multi-shard coordination, independent remote search nodes, or automatic failover. Those require additional contracts and recovery tests.
+The local profile has no index deletion, bulk API, aliases, schema changes, multi-shard coordination, or automatic failover. Independent readers use the separate repository profile below.
+
+## Repository profile
+
+`modules/snapshot-filesystem` extends index-service and implements the exported `SnapshotRepository` contract. Index-service coordinates durable publication and explicit writer epochs; API plugins still only parse requests and execute actions. Each node owns its local engine storage and copies published snapshots into private directories before opening them.
+
+The filesystem reference provider requires coherent cross-process locks, atomic rename, and directory sync. It serializes publication and active transfers with one repository lock. `ProcessFileLock` in the parent classloader ensures local plugin instances do not open competing channels for the same lock file. Stale writer tokens and stale expected heads are rejected at publication. Uncertain metadata renames are synced before reclaiming their predecessors.
+
+Repository-backed nodes configure `index_service.repository: filesystem`, an absolute `index_service.repository_path`, and exactly one `engine.roles` value (`writer` or `reader`). They use separate data paths. Writer responses acknowledge durable repository publication. Reader refresh verifies the manifest and swaps only a fully opened snapshot; existing readers survive failed transfers. `POST /{index}/_writer` in the management category performs manual takeover with `expected_epoch`.
+
+See [configuration, examples, recovery, and limits](snapshot-publication.md) for the complete reference profile. A cloud/object-store implementation and automatic allocation remain follow-up work.
 
 The remaining sections describe the target architecture, including contracts and modules beyond this local profile.
 
@@ -109,22 +119,23 @@ The remaining sections describe the target architecture, including contracts and
 - Plugins already support extension dependencies, Guice modules, lifecycle services, and transport action registration.
 - `Node` constructs plugin components before creating the injector and before initializing `NodeClient`. Engine factories must not open shards or execute client actions during plugin discovery or component construction.
 - `createComponents` currently registers lifecycle objects but does not bind arbitrary returned services into Guice, despite the broad wording of the Plugin API comment. Shared engine services need explicit bindings through `createGuiceModules`.
-- `PluginsService` loads extension dependencies before their dependents. Its Lucene codec SPI reload currently runs in the core loader.
-- Core bootstrap, transport, bytes, and memory utilities use Lucene classes. OpenSearch dependencies also need a dependency and public-signature audit before Lucene can leave the server runtime classpath.
+- `PluginsService` loads extension dependencies before their dependents. Lucene codec discovery runs inside the Lucene provider.
+- Core bootstrap, transport, bytes, and memory utilities use host-owned/JDK types. The upstream core artifact is substituted with `libs/core`; a compiled dependency audit checks the complete host runtime.
 - The engine and index layers live in the projects listed above; there is no `libs/generic-engine` project.
 
 ## Module boundaries
 
 | Module | Owns | Must not own |
 | --- | --- | --- |
-| `server` | Bootstrap, generic plugin lifecycle, HTTP/transport infrastructure, action dispatch, shared task services | Engine selection, shard storage, query planning, Lucene classes in the final architecture |
+| `libs/core` | Product version, transport serialization, byte slices, checksums, memory estimates, shared content contracts | Engine dependencies and on-disk compatibility policy |
+| `server` | Bootstrap, generic plugin lifecycle, HTTP/transport infrastructure, action dispatch, shared task services | Engine selection, shard storage, query planning, Lucene classes |
 | `libs/engine-api` | Engine descriptors and factories, shard reader/writer contracts, normalized documents and queries, errors, checkpoints, snapshot leases, host resource contracts | REST, transport serialization, Guice, Lucene, cloud SDKs |
 | `modules/engine` | Provider registry, shard engine instances, lifecycle, execution admission, host resource adapters | OpenSearch JSON parsing, Lucene-specific algorithms |
 | `modules/lucene-engine` | Document-to-Lucene translation, analyzers, query compilation, writers, readers, directories, codecs, commit/recovery behavior | HTTP routes, index-name resolution, distributed placement, authorization policy |
 | `libs/index-api` | Index metadata, operation actions, bounded request/response wire types, consumer extension marker | REST route registration, backend implementation classes |
 | `modules/index-service` | Index catalog and schema versions, shard routing, coordination, action execution, per-index backend selection | Lucene readers, writers, queries, or file formats |
 | Search/indexing/management API feature plugins | Request parsing, response formatting, contribution to one existing API hub | Engine construction or direct access to Lucene |
-| Future snapshot repository plugin | Immutable blob storage and retrieval, snapshot metadata persistence, integration with fenced publication and retention | Parsing Lucene segments, choosing query execution plans |
+| Snapshot repository plugins | Immutable snapshot storage and retrieval, metadata persistence, fenced publication and transfer retention | Parsing Lucene segments, choosing query execution plans |
 
 The engine API is a plain library packaged once by `modules/engine`. It does not become a server dependency. Both `libs/engine-api` and `libs/index-api` are explicitly registered in `settings.gradle`; automatic discovery only covers modules and plugins.
 
@@ -151,14 +162,14 @@ Use the existing plugin extension mechanism, rather than a second discovery syst
 1. `EnginePlugin` in `modules/engine` is extensible and exports `engine-api` in its bundle.
 2. `LuceneEnginePlugin` declares `extendedPlugins = ['engine']` and implements a small `EngineExtension` contract. It contributes a provider factory with ID `lucene`.
 3. `IndexServicePlugin` also extends `engine`, implements `EngineExtension` with no provider contribution, and consumes the shared registry. An extension can be a provider, a consumer, or both.
-4. Index-service exports `index-api`. API feature plugins extend index-service and exactly one category hub, for example `['index-service', 'search-api']`, and implement `IndexExtension`. Index-service accepts these extensions without registering their REST handlers a second time.
+4. Index-service exports `index-api`. API feature plugins extend index-service and exactly one category hub, for example `['index-service', 'search-api']`, and implement `IndexExtension`. Index-service accepts these extensions without registering their REST handlers a second time. Repository plugins extend index-service and contribute factories through `IndexExtension.repositoryProviders()`; provider IDs must be unique.
 5. The engine module binds the registry and runtime explicitly. Index-service binds its coordination services explicitly. Actions receive those interfaces through injection; no global service locator or calls between concrete plugin classes.
 
 The runtime validates provider IDs, API compatibility, and supported capabilities before opening shards. Duplicate provider IDs are startup errors; multiple distinct provider IDs may coexist. Provider selection is explicit and persisted in index metadata. The initial distribution defaults newly created indices to `lucene`, while an existing index always uses its recorded backend.
 
 If a node is assigned a shard whose provider is absent or incompatible, that shard remains unavailable with a precise diagnostic. Startup fails for an invalid local configuration; allocation fails for an unsupported incoming assignment. Neither case silently substitutes another engine. A node with no engine assignments can run without a provider.
 
-Plugins load at startup and remain loaded until node shutdown. Hot engine unload and multiple Lucene versions in one JVM are outside the initial design. Initially the Lucene engine uses the same centrally managed Lucene version as existing core utilities; it must not bundle duplicate Lucene classes while those classes remain on the parent classpath.
+Plugins load at startup and remain loaded until node shutdown. Hot engine unload and multiple Lucene versions in one JVM are outside the initial design. The Lucene provider bundles its own centrally managed engine JAR and validates its loaded version against generated build metadata before codec discovery or shard creation. Core has no engine version field or codec registration hook.
 
 ## Engine contracts
 
@@ -300,18 +311,26 @@ On shutdown: stop admitting operations, drain bounded in-flight work, release re
 
 Expose provider/version, shard state, queue depth, admission rejections, durable/visible/published checkpoints, refresh/publication lag, active reader leases, disk/cache use, and commit latency. Bound query complexity, result size, batch size, concurrent views, and retained snapshots before opening the API to untrusted clients.
 
-## Removing Lucene from the core
+## Lucene-free core (phase 5)
 
-Do this after the engine boundary is functioning:
+`libs/core` is a locally maintained adaptation of the matching OpenSearch core sources. Gradle substitutes it for every upstream `opensearch-core` dependency, including transitive dependencies. Both implementations must never appear in one distribution. Source identity, archive checksum, licensing, and local modifications are recorded in [core provenance](../../libs/core/UPSTREAM.md).
 
-1. Inventory direct imports and dependency paths, including public signatures in OpenSearch artifacts. Establish a baseline of the server runtime classpath.
-2. Replace utility uses in bytes/serialization, memory accounting, platform constants, collections, and automata with core-owned or suitable non-Lucene abstractions. Preserve wire encodings with compatibility fixtures.
-3. Move Lucene version validation into the provider. Server/product version and engine/on-disk version become separate compatibility checks.
-4. Move codec SPI registration out of `PluginsService`. Add a generic extension-loading hook only if providers require it; the server must not invoke Lucene static registries. Register required codecs before opening existing indices.
-5. Package Lucene dependencies exclusively with the engine plugin after parent-classpath dependencies are eliminated. Keep them centrally versioned and exclude duplicate API classes from provider bundles.
-6. Verify a distribution containing HTTP/REST and metadata functionality can start without the Lucene engine JARs. Add build checks preventing Lucene imports/dependencies from returning to the server and engine API.
+- Core-owned `ByteSlice` and `ByteSliceIterator` replace Lucene byte types in shared signatures. Primitive byte views, CRC32 and collection sorting use JDK APIs. Core owns checked array growth and conservative memory estimates; reference slots are charged at eight bytes, so memory accounting can increase compared with compressed-reference estimates.
+- Product `Version` retains its IDs and transport encoding, without an engine-version field. `LuceneRuntime` validates provider build/runtime versions and initializes codec SPI registries within the provider classloader before opening any shard.
+- Legacy storage exception wire tags retain their payloads and decode to core-owned storage exceptions. Backend exceptions continue to be translated to engine-neutral errors at the provider boundary.
+- The unused Lucene automaton helpers, Lucene-version settings overload, and Lucene-only byte-array sorting helper are removed. Existing wildcard matching uses the existing core glob implementation. The demo hello response no longer advertises a process-wide `lucene_version`.
+- `lucene-core` lives only in `modules/lucene-engine`. Host and API bundles do not contain Lucene, duplicate shared API JARs, or the upstream core JAR.
 
-Until these steps complete, describe the result as a pluggable Lucene engine with a shared Lucene runtime dependency. The ability to omit Lucene from the process is a separate completion criterion.
+The byte-level wire fixtures were captured from the original upstream artifacts before this migration. They cover primitive encodings, Unicode and isolated-surrogate handling, composite bytes, generic byte slices, product versions, and legacy storage exceptions. Java API signatures that exposed Lucene have changed: plugins using them must be rebuilt against this project. This does not promise binary compatibility with upstream OpenSearch plugins.
+
+Build checks:
+
+```sh
+./gradlew :server:checkLuceneIsolation :libs:engine-api:checkApiDependencies
+./gradlew :libs:core:test :server:luceneFreeSmoke
+```
+
+Production configurations reject Lucene outside its provider. `checkLuceneIsolation` checks resolved host artifacts and compiled class references, including transitive JARs. `luceneFreeSmoke` forks a JVM using only production host dependencies and actual distribution module bundles. It starts without Lucene, checks missing-provider diagnostics, adds the provider on restart and writes/reads a document, then removes it and verifies that persisted index metadata remains available. The host classloader cannot resolve Lucene even with the provider installed. The separate-JVM snapshot recovery scenario also runs with the isolated provider.
 
 ## Delivery sequence and acceptance criteria
 
@@ -323,6 +342,6 @@ Until these steps complete, describe the result as a pluggable Lucene engine wit
 | 4 | Snapshot publication and independent search nodes | Incomplete uploads stay invisible; stale-writer fencing; reader refresh atomicity; restart-safe retention; checksum failures; freshness waits |
 | 5 | Remove core Lucene dependencies | Server runtime dependency audit; unchanged wire fixtures; startup without Lucene jars; provider-owned compatibility checks |
 
-Crash/recovery, concurrency, and compatibility checks are essential for engine work. Prefer independent persisted fixtures and process-level failure injection over encoder/decoder roundtrips. Phases 1–3 are implemented; phase 4 needs the repository, publication, and fencing design before independent search nodes can be enabled.
+Crash/recovery, concurrency, and compatibility checks are essential for engine work. Prefer independent persisted fixtures and process-level failure injection over encoder/decoder roundtrips. Phases 1–5 are implemented, with phase 4 using the filesystem reference provider and phase 5 isolating Lucene in its plugin. S3/object storage requires an additional repository provider with its own conditional-publication and recovery proof.
 
 Default scope for phases 1–3: local disk, one writer per shard, committed reads, durable batch acknowledgement, minimal text search, and no automatic distributed failover. Full OpenSearch DSL compatibility, vector search, aggregations, scripting, realtime get, point-in-time pagination, and remote durability each need explicit follow-up contracts.

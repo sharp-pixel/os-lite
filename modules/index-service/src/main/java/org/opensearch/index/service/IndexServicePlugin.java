@@ -26,6 +26,9 @@ import java.util.List;
 
 /** Owns index actions and catalog lifecycle; REST consumers are accepted without registering their routes here. @opensearch.internal */
 public final class IndexServicePlugin extends Plugin implements ActionPlugin, EngineExtension, ExtensiblePlugin {
+    public static final Setting<String> REPOSITORY = Setting.simpleString("index_service.repository", Setting.Property.NodeScope);
+    public static final Setting<String> REPOSITORY_PATH = Setting.simpleString("index_service.repository_path", Setting.Property.NodeScope);
+    private final java.util.Map<String, org.opensearch.index.api.SnapshotRepositoryProvider> repositories = new java.util.LinkedHashMap<>();
     public static final Setting<Integer> MAX_INDICES = Setting.intSetting(
         "index_service.max_indices",
         16,
@@ -36,7 +39,7 @@ public final class IndexServicePlugin extends Plugin implements ActionPlugin, En
 
     @Override
     public List<Setting<?>> getSettings() {
-        return List.of(MAX_INDICES);
+        return List.of(MAX_INDICES, REPOSITORY, REPOSITORY_PATH);
     }
 
     @Override
@@ -44,11 +47,23 @@ public final class IndexServicePlugin extends Plugin implements ActionPlugin, En
         if (plugin instanceof IndexExtension == false) throw new IllegalArgumentException(
             "index-service consumers must implement IndexExtension"
         );
+        for (var provider : ((IndexExtension) plugin).repositoryProviders()) {
+            if (provider.id().matches("[a-z][a-z0-9-]{0,63}") == false) throw new IllegalArgumentException(
+                "invalid repository provider ID"
+            );
+            if (repositories.putIfAbsent(provider.id(), provider) != null) throw new IllegalArgumentException(
+                "duplicate repository provider: " + provider.id()
+            );
+        }
     }
 
     @Override
     public Collection<Module> createGuiceModules() {
-        return List.of(binder -> binder.bind(LocalIndexService.class).in(Scopes.SINGLETON));
+        RepositoryRegistry registry = new RepositoryRegistry(repositories);
+        return List.of(binder -> {
+            binder.bind(RepositoryRegistry.class).toInstance(registry);
+            binder.bind(LocalIndexService.class).in(Scopes.SINGLETON);
+        });
     }
 
     @Override
@@ -60,6 +75,7 @@ public final class IndexServicePlugin extends Plugin implements ActionPlugin, En
     public List<ActionHandler<? extends ActionRequest, ? extends ActionResponse>> getActions() {
         return List.of(
             new ActionHandler<>(IndexActions.CREATE, IndexTransportActions.Create.class),
+            new ActionHandler<>(IndexActions.CLAIM, IndexTransportActions.Claim.class),
             new ActionHandler<>(IndexActions.DESCRIBE, IndexTransportActions.Describe.class),
             new ActionHandler<>(IndexActions.PUT, IndexTransportActions.Put.class),
             new ActionHandler<>(IndexActions.DELETE, IndexTransportActions.Delete.class),

@@ -15,7 +15,7 @@ dependencies {
     api "org.opensearch:opensearch-agent-bootstrap:${project.version}"
     api "org.opensearch:opensearch-agent-policy:${project.version}"
     api "org.opensearch:opensearch-cli:${project.version}"
-    api "org.opensearch:opensearch-core:${project.version}"
+    api project(':libs:core')
     api "org.opensearch:opensearch-plugin-classloader:${project.version}"
     // compileOnly "org.opensearch:opensearch-plugin-classloader:${project.version}"
     // testRuntimeOnly "org.opensearch:opensearch-plugin-classloader:${project.version}"
@@ -40,3 +40,47 @@ compileJava {
 
 tasks.named("dependencyLicenses").configure { it.enabled = false }
 testingConventions.enabled = false
+
+// Inspect both dependency coordinates and compiled references, including transitive host JARs.
+tasks.register('checkLuceneIsolation') {
+    dependsOn tasks.named('classes'), configurations.runtimeClasspath
+    inputs.files(sourceSets.main.output, configurations.runtimeClasspath)
+    doLast {
+        def forbidden = configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts.findAll {
+            it.moduleVersion.id.group == 'org.apache.lucene' ||
+                (it.moduleVersion.id.group == 'org.opensearch' && it.name == 'opensearch-core')
+        }
+        if (!forbidden.isEmpty()) throw new GradleException("Host runtime contains engine/upstream-core artifacts: ${forbidden}")
+        def inspect = { byte[] bytes, String origin ->
+            def constants = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+            if (constants.contains('org/apache/lucene/') || constants.contains('org.apache.lucene.')) {
+                throw new GradleException("Host class references Lucene: ${origin}")
+            }
+        }
+        (sourceSets.main.output.files + configurations.runtimeClasspath.files).each { entry ->
+            if (entry.isDirectory()) {
+                fileTree(entry).matching { include '**/*.class' }.each { inspect(it.bytes, it.toString()) }
+            } else if (entry.name.endsWith('.jar')) {
+                new java.util.zip.ZipFile(entry).withCloseable { zip ->
+                    zip.entries().each { member ->
+                        if (member.name.endsWith('.class')) {
+                            zip.getInputStream(member).withCloseable { inspect(it.readAllBytes(), "${entry.name}!${member.name}") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+tasks.named('check').configure { dependsOn 'checkLuceneIsolation' }
+
+// Deliberately omit testRuntimeClasspath: its Lucene test framework would hide missing host dependencies.
+tasks.register('luceneFreeSmoke', JavaExec) {
+    dependsOn tasks.named('testClasses'), tasks.named('checkLuceneIsolation'), ':distribution:buildModules'
+    classpath = sourceSets.test.output + sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.node.LuceneFreeNodeSmoke'
+    executable = new File(org.opensearch.gradle.info.BuildParams.runtimeJavaHome, 'bin/java').absolutePath
+    jvmArgs '-ea', '-XX:ActiveProcessorCount=2', '--enable-native-access=ALL-UNNAMED', '--add-modules=jdk.incubator.vector'
+    args rootProject.file('distribution/build/outputs/dist/modules').absolutePath
+}
+tasks.named('check').configure { dependsOn 'luceneFreeSmoke' }

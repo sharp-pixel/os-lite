@@ -38,7 +38,7 @@ import com.sun.jna.Structure;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.Constants;
+import org.opensearch.core.util.Platform;
 
 import java.util.Arrays;
 import java.util.List;
@@ -54,10 +54,10 @@ final class JNACLibrary {
 
     public static final int MCL_CURRENT = 1;
     public static final int ENOMEM = 12;
-    public static final int RLIMIT_MEMLOCK = Constants.MAC_OS_X ? 6 : 8;
-    public static final int RLIMIT_AS = Constants.MAC_OS_X ? 5 : 9;
-    public static final int RLIMIT_FSIZE = Constants.MAC_OS_X ? 1 : 1;
-    public static final long RLIM_INFINITY = Constants.MAC_OS_X ? 9223372036854775807L : -1L;
+    public static final int RLIMIT_MEMLOCK = Platform.MAC_OS_X ? 6 : 8;
+    public static final int RLIMIT_AS = Platform.MAC_OS_X ? 5 : 9;
+    public static final int RLIMIT_FSIZE = Platform.MAC_OS_X ? 1 : 1;
+    public static final long RLIM_INFINITY = Platform.MAC_OS_X ? 9223372036854775807L : -1L;
 
     static {
         try {

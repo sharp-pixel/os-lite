@@ -102,6 +102,7 @@ arrow                 = "18.1.0"
 flatbuffers           = "2.0.0"
 
 [libraries]
+jackson-core = { group = "com.fasterxml.jackson.core", name = "jackson-core", version.ref = "jackson" }
 bytebuddy = { group = "net.bytebuddy", name = "byte-buddy", version.ref = "bytebuddy" }
 bytebuddy-agent = { group = "net.bytebuddy", name = "byte-buddy-agent", version.ref = "bytebuddy" }
 mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
@@ -181,7 +182,7 @@ tdigest = { group = "com.tdunning", name = "t-digest", version.ref = "tdigest" }
 
 [bundles]
 # Includes the APIs referenced by the shared forbidden-test signatures.
-unit-test = ["junit", "hamcrest", "randomizedrunner", "lucene-test-framework", "httpcore5", "mockito-core", "bytebuddy", "bytebuddy-agent", "objenesis"]
+unit-test = ["junit", "hamcrest", "randomizedrunner", "httpcore5", "mockito-core", "bytebuddy", "bytebuddy-agent", "objenesis"]
 asm = [
     "asm-analysis",
     "asm-commons",

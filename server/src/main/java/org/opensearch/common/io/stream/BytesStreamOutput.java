@@ -32,12 +32,12 @@
 
 package org.opensearch.common.io.stream;
 
-import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.BytesRefIterator;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.util.PageCacheRecycler;
+import org.opensearch.core.common.bytes.ByteSlice;
+import org.opensearch.core.common.bytes.ByteSliceIterator;
 import org.opensearch.core.common.bytes.BytesArray;
 import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.core.common.io.stream.BytesStream;
@@ -179,9 +179,9 @@ public class BytesStreamOutput extends BytesStream {
     public BytesReference copyBytes() {
         final byte[] keyBytes = new byte[count];
         int offset = 0;
-        final BytesRefIterator iterator = bytes().iterator();
+        final ByteSliceIterator iterator = bytes().iterator();
         try {
-            BytesRef slice;
+            ByteSlice slice;
             while ((slice = iterator.next()) != null) {
                 System.arraycopy(slice.bytes, slice.offset, keyBytes, offset, slice.length);
                 offset += slice.length;

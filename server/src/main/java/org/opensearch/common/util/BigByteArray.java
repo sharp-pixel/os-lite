@@ -32,10 +32,10 @@
 
 package org.opensearch.common.util;
 
-import org.apache.lucene.util.ArrayUtil;
-import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.RamUsageEstimator;
+import org.opensearch.core.common.bytes.ByteSlice;
 import org.opensearch.core.common.util.ByteArray;
+import org.opensearch.core.util.ArraySizing;
+import org.opensearch.core.util.MemorySize;
 
 import java.util.Arrays;
 
@@ -81,7 +81,7 @@ final class BigByteArray extends AbstractBigArray implements ByteArray {
     }
 
     @Override
-    public boolean get(long index, int len, BytesRef ref) {
+    public boolean get(long index, int len, ByteSlice ref) {
         assert index + len <= size();
         int pageIndex = pageIndex(index);
         final int indexInPage = indexInPage(index);
@@ -164,7 +164,7 @@ final class BigByteArray extends AbstractBigArray implements ByteArray {
     public void resize(long newSize) {
         final int numPages = numPages(newSize);
         if (numPages > pages.length) {
-            pages = Arrays.copyOf(pages, ArrayUtil.oversize(numPages, RamUsageEstimator.NUM_BYTES_OBJECT_REF));
+            pages = Arrays.copyOf(pages, ArraySizing.oversize(numPages, MemorySize.NUM_BYTES_OBJECT_REF));
         }
         for (int i = numPages - 1; i >= 0 && pages[i] == null; --i) {
             pages[i] = newBytePage(i);

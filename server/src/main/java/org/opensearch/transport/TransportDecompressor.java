@@ -32,11 +32,11 @@
 
 package org.opensearch.transport;
 
-import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.BytesRefIterator;
 import org.opensearch.common.bytes.ReleasableBytesReference;
 import org.opensearch.common.recycler.Recycler;
 import org.opensearch.common.util.PageCacheRecycler;
+import org.opensearch.core.common.bytes.ByteSlice;
+import org.opensearch.core.common.bytes.ByteSliceIterator;
 import org.opensearch.core.common.bytes.BytesArray;
 import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.core.compress.Compressor;
@@ -92,8 +92,8 @@ public class TransportDecompressor implements Closeable {
             bytesConsumed += headerLength;
         }
 
-        BytesRefIterator refIterator = bytesReference.iterator();
-        BytesRef ref;
+        ByteSliceIterator refIterator = bytesReference.iterator();
+        ByteSlice ref;
         while ((ref = refIterator.next()) != null) {
             inflater.setInput(ref.bytes, ref.offset, ref.length);
             bytesConsumed += ref.length;

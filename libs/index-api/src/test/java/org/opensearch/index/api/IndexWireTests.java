@@ -38,8 +38,8 @@ import static org.junit.Assert.assertTrue;
 @TestMethodProviders({ JUnit3MethodProvider.class })
 public class IndexWireTests extends RandomizedTest {
     public void testIndependentDescribeFixtureIncludesParentTaskAndVersion() throws Exception {
-        // Empty parent-task node ID, protocol version 1, UTF-8 length 5, then index name.
-        byte[] fixture = { 0, 1, 5, 'b', 'o', 'o', 'k', 's' };
+        // Empty parent-task node ID, protocol version 2, UTF-8 length 5, then index name.
+        byte[] fixture = { 0, 2, 5, 'b', 'o', 'o', 'k', 's' };
         try (StreamInput input = StreamInput.wrap(fixture)) {
             IndexRequest.Describe request = new IndexRequest.Describe(input);
             assertEquals(TaskId.EMPTY_TASK_ID, request.getParentTask());
@@ -53,13 +53,13 @@ public class IndexWireTests extends RandomizedTest {
     }
 
     public void testTruncationVersionAndOversizedLengthsAreRejected() throws Exception {
-        byte[] fixture = { 0, 1, 5, 'b', 'o', 'o', 'k', 's' };
+        byte[] fixture = { 0, 2, 5, 'b', 'o', 'o', 'k', 's' };
         for (int i = 0; i < fixture.length; i++) {
             try (StreamInput input = StreamInput.wrap(Arrays.copyOf(fixture, i))) {
                 assertThrows(IOException.class, () -> new IndexRequest.Describe(input));
             }
         }
-        for (byte[] malformed : List.of(new byte[] { 0, 2, 0 }, new byte[] { 0, 1, (byte) 129, 1 }, new byte[] { 0, 1, 1, (byte) 0xff })) {
+        for (byte[] malformed : List.of(new byte[] { 0, 1, 0 }, new byte[] { 0, 2, (byte) 129, 1 }, new byte[] { 0, 2, 1, (byte) 0xff })) {
             try (StreamInput input = StreamInput.wrap(malformed)) {
                 assertThrows(IOException.class, () -> new IndexRequest.Describe(input));
             }
@@ -172,6 +172,65 @@ public class IndexWireTests extends RandomizedTest {
         task.cancel("client disconnected");
         assertTrue(task.context().cancelled());
         assertEquals(EngineException.Code.CANCELLED, assertThrows(EngineException.class, task.context()::check).code());
+    }
+
+    public void testCheckpointWaitAndWriterEpochSurviveActionWire() throws Exception {
+        Checkpoint checkpoint = new Checkpoint(new ShardId(UUID.randomUUID(), 0), UUID.randomUUID(), 7);
+        IndexRequest.Search request = new IndexRequest.Search("books", new SearchQuery.All(), 10, checkpoint, 123);
+        try (BytesStreamOutput output = new BytesStreamOutput()) {
+            request.writeTo(output);
+            try (StreamInput input = output.bytes().streamInput()) {
+                IndexRequest.Search copy = new IndexRequest.Search(input);
+                assertEquals(checkpoint, copy.minimum());
+                assertEquals(123, copy.waitMillis());
+            }
+        }
+        try (BytesStreamOutput output = new BytesStreamOutput()) {
+            new IndexRequest.Claim("books", 42).writeTo(output);
+            try (StreamInput input = output.bytes().streamInput()) {
+                assertEquals(42, new IndexRequest.Claim(input).expectedEpoch());
+            }
+        }
+        assertThrows(IllegalArgumentException.class, () -> new IndexRequest.Search("books", new SearchQuery.All(), 10, null, 1));
+        assertThrows(IllegalArgumentException.class, () -> new IndexRequest.Claim("books", 0));
+    }
+
+    public void testRepositoryWireRejectsIndependentBadMagicVersionAndTruncation() throws Exception {
+        for (byte[] bytes : List.of(
+            new byte[] { 0, 0, 0, 0, 1 },
+            new byte[] { 'O', 'S', 'R', 'P', 2 },
+            new byte[] { 'O', 'S', 'R', 'P', 1 }
+        )) {
+            try (StreamInput input = StreamInput.wrap(bytes)) {
+                assertThrows(IOException.class, () -> SnapshotWire.publication(input));
+            }
+        }
+        IndexMetadata metadata = new IndexMetadata(
+            "books",
+            UUID.randomUUID(),
+            "lucene",
+            new Schema(1, Map.of("title", Schema.FieldType.TEXT))
+        );
+        var manifest = new org.opensearch.engine.api.SnapshotManifest(
+            "lucene",
+            "lucene-1",
+            metadata.schema(),
+            new Checkpoint(metadata.shard(), UUID.randomUUID(), 0),
+            List.of(new org.opensearch.engine.api.SnapshotManifest.File("data", 0, "0".repeat(64)))
+        );
+        var publication = new SnapshotRepository.Publication(metadata, 1, UUID.randomUUID(), UUID.randomUUID(), manifest);
+        try (BytesStreamOutput output = new BytesStreamOutput()) {
+            SnapshotWire.publication(output, publication);
+            byte[] bytes = BytesReference.toBytes(output.bytes());
+            for (int i = 0; i < bytes.length; i++) {
+                try (StreamInput input = StreamInput.wrap(Arrays.copyOf(bytes, i))) {
+                    assertThrows(IOException.class, () -> SnapshotWire.publication(input));
+                }
+            }
+            try (StreamInput input = StreamInput.wrap(bytes)) {
+                assertEquals(publication, SnapshotWire.publication(input));
+            }
+        }
     }
 
     public void testIndexNamesCannotEscapeCatalog() {

@@ -14,6 +14,10 @@ import org.opensearch.action.ActionType;
 public final class IndexActions {
     private IndexActions() {}
 
+    public static final ActionType<IndexResponse.Metadata> CLAIM = new ActionType<>(
+        "indices:admin/os_lite/claim_writer",
+        IndexResponse.Metadata::new
+    );
     public static final ActionType<IndexResponse.Metadata> CREATE = new ActionType<>(
         "indices:admin/os_lite/create",
         IndexResponse.Metadata::new

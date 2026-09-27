@@ -8,6 +8,7 @@
 
 package org.opensearch.index.service;
 
+import org.opensearch.common.io.ProcessFileLock;
 import org.opensearch.common.io.stream.BytesStreamOutput;
 import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.core.common.io.stream.StreamInput;
@@ -17,7 +18,6 @@ import org.opensearch.index.api.IndexWire;
 import java.io.IOException;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
-import java.nio.channels.FileLock;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,8 +33,7 @@ import java.util.UUID;
 final class IndexCatalog implements AutoCloseable {
     private static final int MAGIC = 0x4f534c49;
     private final Path root;
-    private FileChannel lockChannel;
-    private FileLock lock;
+    private ProcessFileLock lock;
 
     IndexCatalog(Path root) {
         this.root = root;
@@ -46,14 +45,8 @@ final class IndexCatalog implements AutoCloseable {
             createDirectories(root);
         }
         if (writable) {
-            lockChannel = FileChannel.open(root.resolve("catalog.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
-            try {
-                lock = lockChannel.tryLock();
-                if (lock == null) throw new IOException("index catalog is already owned by another node");
-            } catch (Exception e) {
-                close();
-                throw e;
-            }
+            lock = ProcessFileLock.tryAcquire(root.resolve("catalog.lock"));
+            if (lock == null) throw new IOException("index catalog is already owned by another node");
         }
         Map<String, IndexMetadata> entries = new HashMap<>();
         Set<UUID> ids = new HashSet<>();
@@ -78,7 +71,7 @@ final class IndexCatalog implements AutoCloseable {
     }
 
     void save(IndexMetadata metadata) throws IOException {
-        if (lock == null || lock.isValid() == false) throw new IOException("index catalog is not writable");
+        if (lock == null) throw new IOException("index catalog is not writable");
         Path temporary = root.resolve(metadata.id() + ".pending");
         Path target = root.resolve(metadata.id() + ".meta");
         try {
@@ -119,14 +112,8 @@ final class IndexCatalog implements AutoCloseable {
 
     @Override
     public synchronized void close() throws IOException {
-        FileLock ownedLock = lock;
-        FileChannel ownedChannel = lockChannel;
+        ProcessFileLock ownedLock = lock;
         lock = null;
-        lockChannel = null;
-        try {
-            if (ownedLock != null && ownedLock.isValid()) ownedLock.close();
-        } finally {
-            if (ownedChannel != null) ownedChannel.close();
-        }
+        if (ownedLock != null) ownedLock.close();
     }
 }

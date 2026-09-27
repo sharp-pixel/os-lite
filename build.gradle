@@ -167,3 +167,11 @@ allprojects {
         javadoc.options.addStringOption("-release", java.targetCompatibility.majorVersion)
     }
 }
+// Core serialization and byte contracts are owned locally; never mix in the upstream core JAR.
+subprojects {
+    configurations.configureEach {
+        resolutionStrategy.dependencySubstitution {
+            substitute module('org.opensearch:opensearch-core') using project(':libs:core')
+        }
+    }
+}

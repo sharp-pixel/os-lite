@@ -32,7 +32,6 @@
 
 package org.opensearch.monitor.jvm;
 
-import org.apache.lucene.util.Constants;
 import org.opensearch.common.Booleans;
 import org.opensearch.common.SuppressForbidden;
 import org.opensearch.common.io.PathUtils;
@@ -41,6 +40,7 @@ import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.core.common.io.stream.Writeable;
 import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.core.service.ReportingService;
+import org.opensearch.core.util.Platform;
 import org.opensearch.core.xcontent.XContentBuilder;
 
 import java.io.IOException;
@@ -207,7 +207,7 @@ public class JvmInfo implements ReportingService.Info {
          */
         final String javaHome = System.getProperty("java.home");
         final String userDir = System.getProperty("user.dir");
-        if (Constants.MAC_OS_X) {
+        if (Platform.MAC_OS_X) {
             return PathUtils.get(javaHome).equals(PathUtils.get(userDir).resolve("jdk.app/Contents/Home").toAbsolutePath());
         } else {
             return PathUtils.get(javaHome).equals(PathUtils.get(userDir).resolve("jre").toAbsolutePath())

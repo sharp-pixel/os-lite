@@ -32,13 +32,9 @@
 
 package org.opensearch.common.regex;
 
-import org.apache.lucene.util.automaton.Automata;
-import org.apache.lucene.util.automaton.Automaton;
-import org.apache.lucene.util.automaton.Operations;
 import org.opensearch.common.Glob;
 import org.opensearch.core.common.Strings;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
@@ -65,33 +61,6 @@ public class Regex {
 
     public static boolean isMatchAllPattern(String str) {
         return str.equals("*");
-    }
-
-    /** Return an {@link Automaton} that matches the given pattern. */
-    public static Automaton simpleMatchToAutomaton(String pattern) {
-        List<Automaton> automata = new ArrayList<>();
-        int previous = 0;
-        for (int i = pattern.indexOf('*'); i != -1; i = pattern.indexOf('*', i + 1)) {
-            automata.add(Automata.makeString(pattern.substring(previous, i)));
-            automata.add(Automata.makeAnyString());
-            previous = i + 1;
-        }
-        automata.add(Automata.makeString(pattern.substring(previous)));
-        return Operations.concatenate(automata);
-    }
-
-    /**
-     * Return an Automaton that matches the union of the provided patterns.
-     */
-    public static Automaton simpleMatchToAutomaton(String... patterns) {
-        if (patterns.length < 1) {
-            throw new IllegalArgumentException("There must be at least one pattern, zero given");
-        }
-        List<Automaton> automata = new ArrayList<>();
-        for (String pattern : patterns) {
-            automata.add(simpleMatchToAutomaton(pattern));
-        }
-        return Operations.union(automata);
     }
 
     /**

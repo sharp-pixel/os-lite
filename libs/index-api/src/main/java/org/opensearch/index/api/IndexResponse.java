@@ -33,7 +33,7 @@ public abstract class IndexResponse extends ActionResponse implements ToXContent
 
     protected IndexResponse(StreamInput in) throws IOException {
         super(in);
-        if (in.readByte() != 1) throw new IOException("unsupported response wire version");
+        if (in.readByte() != 2) throw new IOException("unsupported response wire version");
         index = IndexWire.string(in, 128);
     }
 
@@ -43,7 +43,7 @@ public abstract class IndexResponse extends ActionResponse implements ToXContent
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
-        out.writeByte((byte) 1);
+        out.writeByte((byte) 2);
         IndexWire.string(out, index);
     }
 
@@ -58,16 +58,42 @@ public abstract class IndexResponse extends ActionResponse implements ToXContent
 
     public static final class Metadata extends IndexResponse {
         private final IndexMetadata metadata;
+        private final long writerEpoch;
+        private final Checkpoint published;
 
         public Metadata(IndexMetadata metadata) {
+            this(metadata, 0, null);
+        }
+
+        public Metadata(IndexMetadata metadata, long writerEpoch, Checkpoint published) {
             super(metadata.name());
             this.metadata = metadata;
+            if (writerEpoch < 0
+                || (writerEpoch == 0) != (published == null)
+                || (published != null && published.shard().equals(metadata.shard()) == false)) throw new IllegalArgumentException(
+                    "invalid publication metadata"
+                );
+            this.writerEpoch = writerEpoch;
+            this.published = published;
+        }
+
+        public long writerEpoch() {
+            return writerEpoch;
+        }
+
+        public Checkpoint published() {
+            return published;
         }
 
         public Metadata(StreamInput in) throws IOException {
             super(in);
             metadata = IndexWire.metadata(in);
             if (metadata.name().equals(index()) == false) throw new IOException("index identity mismatch");
+            writerEpoch = in.readVLong();
+            published = in.readBoolean() ? IndexWire.checkpoint(in) : null;
+            if ((writerEpoch == 0) != (published == null) || (published != null && published.shard().equals(metadata.shard()) == false)) {
+                throw new IOException("invalid publication metadata");
+            }
         }
 
         public IndexMetadata metadata() {
@@ -78,6 +104,9 @@ public abstract class IndexResponse extends ActionResponse implements ToXContent
         public void writeTo(StreamOutput out) throws IOException {
             super.writeTo(out);
             IndexWire.metadata(out, metadata);
+            out.writeVLong(writerEpoch);
+            out.writeBoolean(published != null);
+            if (published != null) IndexWire.checkpoint(out, published);
         }
 
         @Override
@@ -92,7 +121,12 @@ public abstract class IndexResponse extends ActionResponse implements ToXContent
                 .startObject("properties");
             for (var field : new java.util.TreeMap<>(metadata.schema().fields()).entrySet())
                 builder.startObject(field.getKey()).field("type", field.getValue().name().toLowerCase(java.util.Locale.ROOT)).endObject();
-            return builder.endObject().endObject().endObject();
+            builder.endObject().endObject();
+            if (published != null) {
+                builder.field("writer_epoch", writerEpoch);
+                checkpoint(builder, published);
+            }
+            return builder.endObject();
         }
     }
 
